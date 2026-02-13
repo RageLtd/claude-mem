@@ -54,6 +54,7 @@ export interface QueueSummaryInput {
 	readonly claudeSessionId: string;
 	readonly lastUserMessage: string;
 	readonly lastAssistantMessage: string;
+	readonly transcriptPath?: string;
 }
 
 export interface CompleteSessionInput {

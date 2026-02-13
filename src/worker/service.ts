@@ -125,6 +125,7 @@ const handleSummaryRoute = async (
 		claudeSessionId: body.claudeSessionId || "",
 		lastUserMessage: body.lastUserMessage || "",
 		lastAssistantMessage: body.lastAssistantMessage || "",
+		transcriptPath: body.transcriptPath,
 	});
 
 	return jsonResponse(result.status, result.body);
