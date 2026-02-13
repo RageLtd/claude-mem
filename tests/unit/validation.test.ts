@@ -70,6 +70,20 @@ describe("projectFromCwd", () => {
 	});
 });
 
+describe("projectFromCwd — git-aware", () => {
+	it("uses git repo root name for a repo directory", () => {
+		// We're running inside the claude-mem-bun repo (or its worktree)
+		const cwd = process.cwd();
+		const result = projectFromCwd(cwd);
+		// Should be "claude-mem-bun" not "dreamy-neumann"
+		expect(result).toBe("claude-mem-bun");
+	});
+
+	it("falls back to basename for non-git directories", () => {
+		expect(projectFromCwd("/tmp/some-random-dir")).toBe("some-random-dir");
+	});
+});
+
 describe("escapeFts5Query", () => {
 	it("returns empty quotes for invalid input", () => {
 		expect(escapeFts5Query("")).toBe('""');
