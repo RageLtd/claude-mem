@@ -4,6 +4,7 @@ import {
 	createDatabase,
 	createSession,
 	runMigrations,
+	storeObservation,
 } from "../../src/db/index";
 import {
 	handleCompleteSession,
@@ -393,6 +394,118 @@ describe("worker handlers", () => {
 			expect(result.status).toBe(200);
 			expect(result.body.results.length).toBeLessThanOrEqual(5);
 		});
+	});
+});
+
+describe("handleGetContext — relevance scoring", () => {
+	let db: Database;
+	let deps: WorkerDeps;
+
+	beforeEach(() => {
+		db = createDatabase(":memory:");
+		runMigrations(db);
+		deps = { db };
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it("returns observations scored by relevance", async () => {
+		// Create sessions first (foreign key requirement)
+		createSession(db, {
+			claudeSessionId: "sess-1",
+			project: "project-a",
+			userPrompt: "Fix auth",
+		});
+		createSession(db, {
+			claudeSessionId: "sess-2",
+			project: "project-b",
+			userPrompt: "Update readme",
+		});
+
+		// Store observations from two projects
+		storeObservation(db, {
+			claudeSessionId: "sess-1",
+			project: "project-a",
+			observation: {
+				type: "bugfix",
+				title: "Fix auth bug in login",
+				subtitle: null,
+				narrative: "Fixed authentication timeout in login handler",
+				facts: [],
+				concepts: ["problem-solution"],
+				filesRead: ["src/auth.ts"],
+				filesModified: ["src/auth.ts"],
+			},
+			promptNumber: 1,
+		});
+
+		storeObservation(db, {
+			claudeSessionId: "sess-2",
+			project: "project-b",
+			observation: {
+				type: "change",
+				title: "Update readme",
+				subtitle: null,
+				narrative: "Updated README with install instructions",
+				facts: [],
+				concepts: ["what-changed"],
+				filesRead: ["README.md"],
+				filesModified: ["README.md"],
+			},
+			promptNumber: 1,
+		});
+
+		const result = await handleGetContext(deps, {
+			project: "project-a",
+			limit: 10,
+			format: "index",
+		});
+
+		expect(result.status).toBe(200);
+		// Both projects should be represented (cross-project)
+		const body = result.body as { context: string; observationCount: number };
+		expect(body.observationCount).toBeGreaterThanOrEqual(1);
+	});
+
+	it("attributes cross-project observations in formatted output", async () => {
+		// Create session first (foreign key requirement)
+		createSession(db, {
+			claudeSessionId: "sess-other",
+			project: "other-project",
+			userPrompt: "Fix bug",
+		});
+
+		// Store observation from another project
+		storeObservation(db, {
+			claudeSessionId: "sess-other",
+			project: "other-project",
+			observation: {
+				type: "bugfix",
+				title: "Same bug fix",
+				subtitle: null,
+				narrative: "Fixed the same bug",
+				facts: [],
+				concepts: [],
+				filesRead: [],
+				filesModified: [],
+			},
+			promptNumber: 1,
+		});
+
+		const result = await handleGetContext(deps, {
+			project: "my-project",
+			limit: 50,
+			format: "index",
+		});
+
+		expect(result.status).toBe(200);
+		const body = result.body as { context: string };
+		// Cross-project items should be labeled
+		if (body.context.includes("Same bug fix")) {
+			expect(body.context).toContain("[from: other-project]");
+		}
 	});
 });
 

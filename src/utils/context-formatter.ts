@@ -178,16 +178,24 @@ const getWorkIcon = (type: string): string => {
 
 /**
  * Formats a single observation as an index table row.
+ * When currentProject is provided, cross-project observations get an attribution label.
  */
-export const formatObservationIndexRow = (obs: Observation): string => {
+export const formatObservationIndexRow = (
+	obs: Observation,
+	currentProject?: string,
+): string => {
 	const icon = TYPE_ICONS[obs.type] || "📝";
 	const time = formatTime(obs.createdAtEpoch);
 	const title = obs.title || "Untitled";
 	const readTokens = estimateObservationTokens(obs);
 	const workIcon = getWorkIcon(obs.type);
 	const workTokens = obs.discoveryTokens || 0;
+	const attribution =
+		currentProject && obs.project !== currentProject
+			? ` [from: ${obs.project}]`
+			: "";
 
-	return `| #${obs.id} | ${time} | ${icon} | ${title} | ~${readTokens} | ${workIcon} ${workTokens.toLocaleString()} |`;
+	return `| #${obs.id} | ${time} | ${icon} | ${title}${attribution} | ~${readTokens} | ${workIcon} ${workTokens.toLocaleString()} |`;
 };
 
 /**
@@ -297,7 +305,7 @@ export const formatContextIndex = (
 			parts.push(`**${fileGroup.filePath}**`);
 			parts.push(formatTableHeader());
 			for (const obs of fileGroup.items) {
-				parts.push(formatObservationIndexRow(obs));
+				parts.push(formatObservationIndexRow(obs, project));
 			}
 			parts.push("");
 		}

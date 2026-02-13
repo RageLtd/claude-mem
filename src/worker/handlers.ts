@@ -6,6 +6,7 @@
 import type { Database } from "bun:sqlite";
 import {
 	createSession,
+	getCandidateObservations,
 	getObservationById,
 	getRecentObservations,
 	getRecentSummaries,
@@ -21,6 +22,7 @@ import {
 	formatContextIndex,
 	formatObservationFull,
 } from "../utils/context-formatter";
+import { type ScoringContext, scoreObservation } from "../utils/relevance";
 import { parseSince } from "../utils/temporal";
 import { escapeFts5Query, projectFromCwd } from "../utils/validation";
 import type { SessionManager } from "./session-manager";
@@ -450,6 +452,7 @@ export const handleCompleteSession = async (
 
 /**
  * Get context for a project (recent observations and summaries).
+ * Uses cross-project retrieval with relevance scoring.
  * Supports progressive disclosure via format parameter (default: index).
  */
 export const handleGetContext = async (
@@ -458,19 +461,67 @@ export const handleGetContext = async (
 ): Promise<HandlerResponse> => {
 	const { project, limit, format = "index", since } = input;
 
-	// Parse since filter if provided
 	const sinceEpoch = parseSince(since);
 
-	// Get recent observations
-	const observationsResult = getRecentObservations(deps.db, { project, limit });
-	if (!observationsResult.ok) {
+	// Get candidates from ALL projects (3x limit for re-ranking headroom)
+	const candidateLimit = limit * 3;
+	const candidatesResult = getCandidateObservations(deps.db, {
+		limit: candidateLimit,
+	});
+
+	if (!candidatesResult.ok) {
 		return {
 			status: 500,
-			body: { error: observationsResult.error.message },
+			body: { error: candidatesResult.error.message },
 		};
 	}
 
-	// Get recent summaries
+	let candidates = candidatesResult.value;
+
+	// Filter by since if provided
+	if (sinceEpoch !== null) {
+		candidates = candidates.filter((o) => o.createdAtEpoch >= sinceEpoch);
+	}
+
+	// Build scoring context
+	const ftsRanks = new Map<number, number>();
+	for (const c of candidates) {
+		if (c.ftsRank !== 0) {
+			ftsRanks.set(c.id, Math.abs(c.ftsRank));
+		}
+	}
+
+	const halfLifeDays = Number.parseInt(
+		process.env.CLAUDE_MEM_RECENCY_HALFLIFE_DAYS || "2",
+		10,
+	);
+	const crossProjectEnabled = process.env.CLAUDE_MEM_CROSS_PROJECT !== "false";
+
+	const scoringContext: ScoringContext = {
+		currentProject: project,
+		cwdFiles: [],
+		ftsRanks,
+		config: {
+			recencyHalfLifeDays: Number.isNaN(halfLifeDays) ? 2 : halfLifeDays,
+			sameProjectBonus: 0.1,
+			ftsWeight: 1.0,
+			conceptWeight: 0.5,
+		},
+	};
+
+	// Score and sort
+	const scored = candidates
+		.filter((o) => crossProjectEnabled || o.project === project)
+		.map((obs) => ({
+			observation: obs as import("../types/domain").Observation,
+			score: scoreObservation(obs, scoringContext),
+		}))
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit);
+
+	const observations = scored.map((s) => s.observation);
+
+	// Get summaries (still project-scoped)
 	const summariesResult = getRecentSummaries(deps.db, { project, limit });
 	if (!summariesResult.ok) {
 		return {
@@ -479,16 +530,11 @@ export const handleGetContext = async (
 		};
 	}
 
-	// Filter by since if provided
-	let observations = observationsResult.value;
 	let summaries = summariesResult.value;
-
 	if (sinceEpoch !== null) {
-		observations = observations.filter((o) => o.createdAtEpoch >= sinceEpoch);
 		summaries = summaries.filter((s) => s.createdAtEpoch >= sinceEpoch);
 	}
 
-	// If no context exists, show first-run message
 	if (observations.length === 0 && summaries.length === 0) {
 		return {
 			status: 200,
@@ -501,7 +547,6 @@ export const handleGetContext = async (
 		};
 	}
 
-	// Format based on requested format
 	const context =
 		format === "index"
 			? formatContextIndex(project, observations, summaries)
