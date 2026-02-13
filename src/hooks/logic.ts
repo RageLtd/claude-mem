@@ -85,6 +85,52 @@ const sanitizeToolResponse = (response: unknown): unknown => {
 };
 
 // ============================================================================
+// Tool Filtering
+// ============================================================================
+
+/**
+ * Default tools that should never be forwarded to the worker.
+ * These are trivial operations that don't produce meaningful observations.
+ */
+export const DEFAULT_SKIP_TOOLS = ["TodoRead", "TodoWrite", "LS"] as const;
+
+/**
+ * Returns the set of tool names to skip.
+ * Reads from CLAUDE_MEM_SKIP_TOOLS env var (comma-separated) or uses defaults.
+ */
+export const getSkipTools = (): ReadonlySet<string> => {
+	const envVar = process.env.CLAUDE_MEM_SKIP_TOOLS;
+	if (envVar !== undefined) {
+		return new Set(
+			envVar
+				.split(",")
+				.map((t) => t.trim())
+				.filter(Boolean),
+		);
+	}
+	return new Set(DEFAULT_SKIP_TOOLS);
+};
+
+/**
+ * Measures the combined text length of tool input and response.
+ * Objects are JSON-stringified; strings are measured directly.
+ */
+export const getContentLength = (
+	toolInput: unknown,
+	toolResponse: unknown,
+): number => {
+	const inputLen =
+		typeof toolInput === "string"
+			? toolInput.length
+			: JSON.stringify(toolInput ?? "").length;
+	const responseLen =
+		typeof toolResponse === "string"
+			? toolResponse.length
+			: JSON.stringify(toolResponse ?? "").length;
+	return inputLen + responseLen;
+};
+
+// ============================================================================
 // Hook Processors
 // ============================================================================
 
@@ -136,11 +182,23 @@ export const processContextHook = async (
 
 /**
  * Processes PostToolUse hook - queues observation.
+ * Filters out trivial tools and observations with minimal content.
  */
 export const processSaveHook = async (
 	deps: HookDeps,
 	input: PostToolUseInput,
 ): Promise<HookOutput> => {
+	// Skip tools in the skip list
+	const skipTools = getSkipTools();
+	if (skipTools.has(input.tool_name)) {
+		return createSuccessOutput();
+	}
+
+	// Skip observations with tiny combined content
+	if (getContentLength(input.tool_input, input.tool_response) < 50) {
+		return createSuccessOutput();
+	}
+
 	try {
 		await postToWorker(deps, "/observation", {
 			claudeSessionId: input.session_id,
@@ -193,7 +251,7 @@ export const processSummaryHook = async (
 	try {
 		await postToWorker(deps, "/summary", {
 			claudeSessionId: input.session_id,
-			transcriptPath: input.transcript_path,
+			transcriptPath: input.transcript_path || "",
 			lastUserMessage: "",
 			lastAssistantMessage: "",
 		});

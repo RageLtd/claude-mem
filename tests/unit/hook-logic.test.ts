@@ -162,6 +162,74 @@ describe("hook logic", () => {
 		});
 	});
 
+	describe("processSaveHook tool filtering", () => {
+		it("skips TodoRead tool", async () => {
+			const input: PostToolUseInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				tool_name: "TodoRead",
+				tool_input: {},
+				tool_response: "some todos",
+			};
+			const result = await processSaveHook(deps, input);
+			expect(result.continue).toBe(true);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it("skips TodoWrite tool", async () => {
+			const input: PostToolUseInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				tool_name: "TodoWrite",
+				tool_input: {},
+				tool_response: "ok",
+			};
+			const result = await processSaveHook(deps, input);
+			expect(result.continue).toBe(true);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it("skips LS tool", async () => {
+			const input: PostToolUseInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				tool_name: "LS",
+				tool_input: {},
+				tool_response: "file1.ts\nfile2.ts",
+			};
+			const result = await processSaveHook(deps, input);
+			expect(result.continue).toBe(true);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it("skips observations with tiny combined text (<50 chars)", async () => {
+			const input: PostToolUseInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				tool_name: "Read",
+				tool_input: "a",
+				tool_response: "",
+			};
+			const result = await processSaveHook(deps, input);
+			expect(result.continue).toBe(true);
+			expect(mockFetch).not.toHaveBeenCalled();
+		});
+
+		it("allows Read tool with substantial content", async () => {
+			const input: PostToolUseInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				tool_name: "Read",
+				tool_input: JSON.stringify({ file_path: "/projects/test/src/app.ts" }),
+				tool_response:
+					"const app = express(); // ... lots of code here that is substantial enough ...",
+			};
+			const result = await processSaveHook(deps, input);
+			expect(result.continue).toBe(true);
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe("processNewHook (UserPromptSubmit)", () => {
 		it("strips private tags from prompt before storage", async () => {
 			const input: UserPromptSubmitInput = {
@@ -229,6 +297,38 @@ describe("hook logic", () => {
 			const result = await processSummaryHook(deps, input);
 
 			expect(result.continue).toBe(true);
+		});
+	});
+
+	describe("processSummaryHook message extraction", () => {
+		it("passes transcript_path to worker", async () => {
+			const input: StopInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+				transcript_path: "/tmp/transcript.jsonl",
+			};
+
+			await processSummaryHook(deps, input);
+
+			expect(mockFetch).toHaveBeenCalledTimes(1);
+			const callArgs = mockFetch.mock.calls[0];
+			const body = JSON.parse(callArgs[1].body);
+			expect(body.claudeSessionId).toBe("session-123");
+			expect(body).toHaveProperty("transcriptPath");
+			expect(body.transcriptPath).toBe("/tmp/transcript.jsonl");
+		});
+
+		it("sends empty transcriptPath when not provided", async () => {
+			const input: StopInput = {
+				session_id: "session-123",
+				cwd: "/projects/test",
+			};
+
+			await processSummaryHook(deps, input);
+
+			const callArgs = mockFetch.mock.calls[0];
+			const body = JSON.parse(callArgs[1].body);
+			expect(body.transcriptPath).toBe("");
 		});
 	});
 
