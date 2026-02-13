@@ -9,7 +9,11 @@ import {
 	type SDKMessage,
 	type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { storeObservation, storeSummary } from "../db/index";
+import {
+	findSimilarObservation,
+	storeObservation,
+	storeSummary,
+} from "../db/index";
 import { parseObservations, parseSummary } from "../sdk/parser";
 import {
 	buildContinuationPrompt,
@@ -419,6 +423,21 @@ export const createSDKAgent = (deps: SDKAgentDeps): SDKAgent => {
 				log(`Parsed ${observations.length} observations from content`);
 
 				for (const obs of observations) {
+					// Deduplication check
+					const dupCheck = findSimilarObservation(db, {
+						project: session.project,
+						title: obs.title || "",
+						withinMs: 3600000, // 1 hour
+					});
+
+					if (dupCheck.ok && dupCheck.value) {
+						log(
+							`Skipping duplicate observation: "${obs.title}" (similar to #${dupCheck.value.id})`,
+						);
+						yield { type: "acknowledged" };
+						continue;
+					}
+
 					log(`Storing observation: type=${obs.type}, title=${obs.title}`);
 					const result = storeObservation(db, {
 						claudeSessionId: session.claudeSessionId,

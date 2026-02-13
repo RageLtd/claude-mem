@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	createDatabase,
 	createSession,
+	findSimilarObservation,
 	getCandidateObservations,
 	getObservationById,
 	getRecentObservations,
@@ -708,6 +709,66 @@ describe("database", () => {
 			expect(result.ok).toBe(true);
 			if (result.ok) {
 				expect(result.value[0]).toHaveProperty("ftsRank");
+			}
+		});
+	});
+
+	describe("findSimilarObservation", () => {
+		it("returns null when no similar observations exist", () => {
+			const result = findSimilarObservation(db, {
+				project: "test-project",
+				title: "Completely unique title",
+				withinMs: 3600000,
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value).toBeNull();
+			}
+		});
+
+		it("finds similar observation within time window", () => {
+			createSession(db, {
+				claudeSessionId: "sess-1",
+				project: "test-project",
+				userPrompt: "Test",
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-1",
+				project: "test-project",
+				observation: {
+					type: "discovery",
+					title: "Database connection pooling exhausts connections",
+					subtitle: null,
+					narrative: "Found connection leak",
+					facts: [],
+					concepts: [],
+					filesRead: [],
+					filesModified: [],
+				},
+				promptNumber: 1,
+			});
+
+			const result = findSimilarObservation(db, {
+				project: "test-project",
+				title: "Database connection pooling exhausts connections slowly",
+				withinMs: 3600000,
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value).not.toBeNull();
+			}
+		});
+
+		it("ignores observations from different projects", () => {
+			const result = findSimilarObservation(db, {
+				project: "different-project",
+				title: "Database connection pooling exhausts connections",
+				withinMs: 3600000,
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value).toBeNull();
 			}
 		});
 	});

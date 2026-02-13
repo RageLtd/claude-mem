@@ -614,6 +614,66 @@ export const getCandidateObservations = (
 };
 
 // ============================================================================
+// Deduplication
+// ============================================================================
+
+interface FindSimilarInput {
+	readonly project: string;
+	readonly title: string;
+	readonly withinMs: number;
+}
+
+/**
+ * Jaccard similarity on word tokens.
+ */
+export const jaccardSimilarity = (a: string, b: string): number => {
+	const wordsA = new Set(a.toLowerCase().split(/\s+/));
+	const wordsB = new Set(b.toLowerCase().split(/\s+/));
+	if (wordsA.size === 0 && wordsB.size === 0) return 1;
+	if (wordsA.size === 0 || wordsB.size === 0) return 0;
+
+	let intersection = 0;
+	for (const w of wordsA) {
+		if (wordsB.has(w)) intersection++;
+	}
+	const union = wordsA.size + wordsB.size - intersection;
+	return union === 0 ? 0 : intersection / union;
+};
+
+/**
+ * Finds a near-duplicate observation in the same project within a time window.
+ * Returns the matching observation if Jaccard similarity > 0.8, null otherwise.
+ */
+export const findSimilarObservation = (
+	db: Database,
+	input: FindSimilarInput,
+): Result<Observation | null> => {
+	const { project, title, withinMs } = input;
+	const cutoff = Date.now() - withinMs;
+
+	try {
+		const rows = db
+			.query<ObservationRow, [string, number]>(
+				`SELECT * FROM observations
+				 WHERE project = ? AND created_at_epoch > ?
+				 ORDER BY created_at_epoch DESC
+				 LIMIT 20`,
+			)
+			.all(project, cutoff);
+
+		for (const row of rows) {
+			if (row.title && jaccardSimilarity(title, row.title) > 0.8) {
+				return ok(rowToObservation(row));
+			}
+		}
+
+		return ok(null);
+	} catch (e) {
+		return err(e instanceof Error ? e : new Error(String(e)));
+	}
+};
+
+// ============================================================================
 // Row Types and Converters
 // ============================================================================
 
