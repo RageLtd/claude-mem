@@ -67,13 +67,15 @@ export const calculateTypeScore = (type: string): number => {
 
 /**
  * Combines FTS5 rank and concept overlap into a similarity score (0-1.5).
- * FTS rank is weighted more heavily than concept overlap.
+ * Weights are configurable via ScoringConfig.
  */
 export const calculateSimilarityScore = (
 	normalizedFtsRank: number,
 	conceptOverlap: number,
+	ftsWeight = DEFAULT_SCORING_CONFIG.ftsWeight,
+	conceptWeight = DEFAULT_SCORING_CONFIG.conceptWeight,
 ): number => {
-	return normalizedFtsRank * 1.0 + conceptOverlap * 0.5;
+	return normalizedFtsRank * ftsWeight + conceptOverlap * conceptWeight;
 };
 
 /**
@@ -121,7 +123,13 @@ export const scoreObservation = (
 	const typeImportance = calculateTypeScore(observation.type);
 
 	const ftsRank = context.ftsRanks.get(observation.id) ?? 0;
-	const similarity = calculateSimilarityScore(ftsRank, 0);
+	// Concept overlap per-observation not yet available; will be computed in Task 7
+	const similarity = calculateSimilarityScore(
+		ftsRank,
+		0,
+		config.ftsWeight,
+		config.conceptWeight,
+	);
 
 	const allFiles = [...observation.filesRead, ...observation.filesModified];
 	const fileOverlap = calculateFileOverlapScore(allFiles, context.cwdFiles);
