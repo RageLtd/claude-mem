@@ -71,7 +71,7 @@ No classes or OOP. Pure functions, immutable data (`readonly` on all interface f
 
 ### Formatting
 
-- **Tabs** for indentation (biome.json)
+- **2 spaces** for indentation (biome.json)
 - **Double quotes** for strings
 - Run `bunx biome check --write .` before committing
 
