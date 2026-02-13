@@ -545,4 +545,26 @@ describe("database", () => {
 			}
 		});
 	});
+
+	describe("migration v5 — cross-project indexes", () => {
+		it("creates idx_observations_concepts index", () => {
+			const row = db
+				.query<{ name: string }, []>(
+					"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_observations_concepts'",
+				)
+				.get();
+			expect(row).not.toBeNull();
+			expect(row!.name).toBe("idx_observations_concepts");
+		});
+
+		it("creates idx_observations_project_epoch index", () => {
+			const row = db
+				.query<{ name: string }, []>(
+					"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_observations_project_epoch'",
+				)
+				.get();
+			expect(row).not.toBeNull();
+			expect(row!.name).toBe("idx_observations_project_epoch");
+		});
+	});
 });

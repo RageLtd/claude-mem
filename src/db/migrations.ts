@@ -233,4 +233,16 @@ export const migrations: readonly Migration[] = [
       `);
 		},
 	},
+	{
+		version: 5,
+		description: "Add cross-project query indexes",
+		up: (db) => {
+			db.run(
+				"CREATE INDEX IF NOT EXISTS idx_observations_concepts ON observations(concepts)",
+			);
+			db.run(
+				"CREATE INDEX IF NOT EXISTS idx_observations_project_epoch ON observations(project, created_at_epoch DESC)",
+			);
+		},
+	},
 ];
