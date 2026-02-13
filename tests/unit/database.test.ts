@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	createDatabase,
 	createSession,
+	getCandidateObservations,
 	getObservationById,
 	getRecentObservations,
 	getSessionByClaudeId,
@@ -565,6 +566,149 @@ describe("database", () => {
 				.get();
 			expect(row).not.toBeNull();
 			expect(row!.name).toBe("idx_observations_project_epoch");
+		});
+	});
+
+	describe("getCandidateObservations (cross-project)", () => {
+		it("returns observations from all projects", () => {
+			// Store observations in two different projects
+			createSession(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				userPrompt: "Test",
+			});
+
+			createSession(db, {
+				claudeSessionId: "sess-2",
+				project: "project-b",
+				userPrompt: "Test",
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				observation: {
+					type: "bugfix",
+					title: "Fix auth bug",
+					subtitle: null,
+					narrative: "Fixed authentication timeout",
+					facts: [],
+					concepts: ["problem-solution"],
+					filesRead: ["src/auth.ts"],
+					filesModified: ["src/auth.ts"],
+				},
+				promptNumber: 1,
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-2",
+				project: "project-b",
+				observation: {
+					type: "discovery",
+					title: "Found config issue",
+					subtitle: null,
+					narrative: "Config parsing fails on empty",
+					facts: [],
+					concepts: ["gotcha"],
+					filesRead: ["src/config.ts"],
+					filesModified: [],
+				},
+				promptNumber: 1,
+			});
+
+			const result = getCandidateObservations(db, { limit: 10 });
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value.length).toBe(2);
+				const projects = result.value.map((o) => o.project);
+				expect(projects).toContain("project-a");
+				expect(projects).toContain("project-b");
+			}
+		});
+
+		it("supports FTS keyword filtering", () => {
+			// Each test needs its own data since beforeEach resets DB
+			createSession(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				userPrompt: "Test",
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				observation: {
+					type: "bugfix",
+					title: "Fix auth bug",
+					subtitle: null,
+					narrative: "Fixed authentication timeout",
+					facts: [],
+					concepts: ["problem-solution"],
+					filesRead: ["src/auth.ts"],
+					filesModified: ["src/auth.ts"],
+				},
+				promptNumber: 1,
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				observation: {
+					type: "discovery",
+					title: "Found config issue",
+					subtitle: null,
+					narrative: "Config parsing fails on empty",
+					facts: [],
+					concepts: ["gotcha"],
+					filesRead: ["src/config.ts"],
+					filesModified: [],
+				},
+				promptNumber: 2,
+			});
+
+			const result = getCandidateObservations(db, {
+				limit: 10,
+				ftsQuery: '"auth"',
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value.length).toBeGreaterThanOrEqual(1);
+				expect(result.value[0].title).toContain("auth");
+			}
+		});
+
+		it("returns ftsRank when FTS query provided", () => {
+			// Each test needs its own data since beforeEach resets DB
+			createSession(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				userPrompt: "Test",
+			});
+
+			storeObservation(db, {
+				claudeSessionId: "sess-1",
+				project: "project-a",
+				observation: {
+					type: "bugfix",
+					title: "Fix auth bug",
+					subtitle: null,
+					narrative: "Fixed authentication timeout",
+					facts: [],
+					concepts: ["problem-solution"],
+					filesRead: ["src/auth.ts"],
+					filesModified: ["src/auth.ts"],
+				},
+				promptNumber: 1,
+			});
+
+			const result = getCandidateObservations(db, {
+				limit: 10,
+				ftsQuery: '"auth"',
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.value[0]).toHaveProperty("ftsRank");
+			}
 		});
 	});
 });

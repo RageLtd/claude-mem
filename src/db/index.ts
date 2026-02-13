@@ -547,6 +547,73 @@ export const searchSummaries = (
 };
 
 // ============================================================================
+// Cross-Project Candidate Retrieval
+// ============================================================================
+
+interface GetCandidateObservationsInput {
+	readonly limit: number;
+	readonly ftsQuery?: string;
+}
+
+export interface ObservationWithRank extends Observation {
+	readonly ftsRank: number;
+}
+
+/**
+ * Gets candidate observations across ALL projects for relevance scoring.
+ * When ftsQuery is provided, uses FTS5 for keyword matching and returns rank.
+ * When no ftsQuery, returns recent observations ordered by epoch.
+ */
+export const getCandidateObservations = (
+	db: Database,
+	input: GetCandidateObservationsInput,
+): Result<readonly ObservationWithRank[]> => {
+	const { limit, ftsQuery } = input;
+
+	try {
+		if (ftsQuery) {
+			const sql = `
+				SELECT o.*, fts.rank as fts_rank
+				FROM observations o
+				JOIN observations_fts fts ON o.id = fts.rowid
+				WHERE observations_fts MATCH ?
+				ORDER BY fts.rank
+				LIMIT ?
+			`;
+			const rows = db
+				.query<ObservationRow & { fts_rank: number }, [string, number]>(sql)
+				.all(ftsQuery, limit);
+
+			return ok(
+				rows.map((row) => ({
+					...rowToObservation(row),
+					ftsRank: row.fts_rank,
+				})),
+			);
+		}
+
+		// No FTS query — return recent from all projects
+		const sql = `
+			SELECT *, 0 as fts_rank FROM observations
+			ORDER BY created_at_epoch DESC
+			LIMIT ?
+		`;
+		const rows = db
+			.query<ObservationRow & { fts_rank: number }, [number]>(sql)
+			.all(limit);
+
+		return ok(
+			rows.map((row) => ({
+				...rowToObservation(row),
+				ftsRank: 0,
+			})),
+		);
+	} catch (e) {
+		return err(e instanceof Error ? e : new Error(String(e)));
+	}
+};
+
+// ============================================================================
 // Row Types and Converters
 // ============================================================================
 
