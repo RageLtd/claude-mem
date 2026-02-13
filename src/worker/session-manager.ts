@@ -61,6 +61,9 @@ interface SessionState {
 	>;
 	lastActivityAt: number;
 	closed: boolean;
+	pendingBatch: ToolObservation[];
+	batchToolName: string | null;
+	batchTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // ============================================================================
@@ -109,6 +112,11 @@ export interface SessionManager {
 export const createSessionManager = (): SessionManager => {
 	const sessions = new Map<number, SessionState>();
 
+	const BATCH_WINDOW_MS = Number.parseInt(
+		process.env.CLAUDE_MEM_BATCH_WINDOW_MS || "3000",
+		10,
+	);
+
 	const initializeSession = (
 		sessionDbId: number,
 		claudeSessionId: string,
@@ -135,6 +143,9 @@ export const createSessionManager = (): SessionManager => {
 			waitingResolvers: [],
 			lastActivityAt: Date.now(),
 			closed: false,
+			pendingBatch: [],
+			batchToolName: null,
+			batchTimer: null,
 		};
 
 		sessions.set(sessionDbId, state);
@@ -167,14 +178,66 @@ export const createSessionManager = (): SessionManager => {
 		return true;
 	};
 
+	const flushBatch = (sessionDbId: number): void => {
+		const state = sessions.get(sessionDbId);
+		if (!state || state.pendingBatch.length === 0) return;
+
+		if (state.pendingBatch.length === 1) {
+			enqueueMessage(sessionDbId, {
+				type: "observation",
+				data: { observation: state.pendingBatch[0] },
+			});
+		} else {
+			const merged: ToolObservation = {
+				toolName: state.batchToolName || state.pendingBatch[0].toolName,
+				toolInput: state.pendingBatch.map((o) => o.toolInput),
+				toolResponse: state.pendingBatch.map((o) => o.toolResponse),
+				cwd: state.pendingBatch[0].cwd,
+				occurredAt: state.pendingBatch[0].occurredAt,
+			};
+			enqueueMessage(sessionDbId, {
+				type: "observation",
+				data: { observation: merged },
+			});
+		}
+
+		state.pendingBatch = [];
+		state.batchToolName = null;
+		state.batchTimer = null;
+	};
+
 	const queueObservation = (
 		sessionDbId: number,
 		observation: ToolObservation,
 	): boolean => {
-		return enqueueMessage(sessionDbId, {
-			type: "observation",
-			data: { observation },
-		});
+		const state = sessions.get(sessionDbId);
+		if (!state || state.closed) return false;
+
+		state.lastActivityAt = Date.now();
+
+		// Check if this can be added to the current batch
+		if (
+			state.batchToolName === observation.toolName &&
+			state.pendingBatch.length > 0
+		) {
+			state.pendingBatch.push(observation);
+			return true;
+		}
+
+		// Different tool type — flush existing batch first
+		if (state.pendingBatch.length > 0) {
+			if (state.batchTimer) clearTimeout(state.batchTimer);
+			flushBatch(sessionDbId);
+		}
+
+		// Start new batch
+		state.pendingBatch = [observation];
+		state.batchToolName = observation.toolName;
+		state.batchTimer = setTimeout(() => {
+			flushBatch(sessionDbId);
+		}, BATCH_WINDOW_MS);
+
+		return true;
 	};
 
 	const queueSummarize = (
@@ -242,6 +305,12 @@ export const createSessionManager = (): SessionManager => {
 		const state = sessions.get(sessionDbId);
 		if (!state) {
 			return false;
+		}
+
+		// Flush any pending observation batch before closing
+		if (state.batchTimer) clearTimeout(state.batchTimer);
+		if (state.pendingBatch.length > 0) {
+			flushBatch(sessionDbId);
 		}
 
 		state.closed = true;

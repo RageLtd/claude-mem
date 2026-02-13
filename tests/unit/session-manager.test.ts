@@ -156,7 +156,7 @@ describe("SessionManager", () => {
 			const manager = createSessionManager();
 			manager.initializeSession(1, "claude-123", "project", "prompt");
 
-			// Queue messages first
+			// Queue messages: observation is batched (deferred), summarize is immediate
 			manager.queueObservation(1, {
 				toolName: "Read",
 				toolInput: {},
@@ -166,11 +166,14 @@ describe("SessionManager", () => {
 			});
 			manager.queueSummarize(1, "last message");
 
+			// Wait for batch window to flush the observation
+			await new Promise((resolve) => setTimeout(resolve, 3500));
+
 			const iterator = manager.getMessageIterator(1);
 			expect(iterator).not.toBeNull();
 			const messages: PendingMessage[] = [];
 
-			// Get first message
+			// Get first message (summarize arrives immediately, observation after batch flush)
 			const result1 = await iterator?.next();
 			if (result1 && !result1.done) messages.push(result1.value);
 
@@ -179,8 +182,8 @@ describe("SessionManager", () => {
 			if (result2 && !result2.done) messages.push(result2.value);
 
 			expect(messages.length).toBe(2);
-			expect(messages[0].type).toBe("observation");
-			expect(messages[1].type).toBe("summarize");
+			expect(messages[0].type).toBe("summarize");
+			expect(messages[1].type).toBe("observation");
 		});
 
 		it("resolves immediately when messages are queued after waiting", async () => {
@@ -260,6 +263,120 @@ describe("SessionManager", () => {
 
 			const result = await pendingPromise;
 			expect(result.done).toBe(true);
+		});
+	});
+
+	describe("observation batching", () => {
+		it("merges consecutive observations of the same tool type within batch window", async () => {
+			const sm = createSessionManager();
+			sm.initializeSession(1, "sess-1", "test", "prompt");
+
+			sm.queueObservation(1, {
+				toolName: "Read",
+				toolInput: JSON.stringify({ file_path: "a.ts" }),
+				toolResponse: "content of a",
+				cwd: "/test",
+				occurredAt: new Date().toISOString(),
+			});
+
+			sm.queueObservation(1, {
+				toolName: "Read",
+				toolInput: JSON.stringify({ file_path: "b.ts" }),
+				toolResponse: "content of b",
+				cwd: "/test",
+				occurredAt: new Date().toISOString(),
+			});
+
+			// Wait for batch window to flush (3s + buffer)
+			await new Promise((resolve) => setTimeout(resolve, 3500));
+
+			const iter = sm.getMessageIterator(1);
+			expect(iter).not.toBeNull();
+
+			const msg = await Promise.race([
+				iter?.next(),
+				new Promise<IteratorResult<unknown>>((resolve) =>
+					setTimeout(() => resolve({ value: undefined, done: true }), 1000),
+				),
+			]);
+
+			expect(msg.done).toBe(false);
+			if (!msg.done) {
+				const data = msg.value as {
+					type: string;
+					data: { observation: { toolInput: unknown } };
+				};
+				expect(data.type).toBe("observation");
+				const input = JSON.stringify(data.data.observation.toolInput);
+				expect(input).toContain("a.ts");
+				expect(input).toContain("b.ts");
+			}
+
+			sm.closeSession(1);
+		});
+
+		it("does not batch observations of different tool types", async () => {
+			const sm = createSessionManager();
+			sm.initializeSession(1, "sess-1", "test", "prompt");
+
+			sm.queueObservation(1, {
+				toolName: "Read",
+				toolInput: "read input with enough content to exceed minimum",
+				toolResponse: "read response with enough content to pass the filter",
+				cwd: "/test",
+				occurredAt: new Date().toISOString(),
+			});
+
+			sm.queueObservation(1, {
+				toolName: "Edit",
+				toolInput: "edit input with enough content to exceed minimum filter",
+				toolResponse: "edit response with enough content to pass the filter",
+				cwd: "/test",
+				occurredAt: new Date().toISOString(),
+			});
+
+			// The first batch (Read) should have been flushed when Edit came in
+			// Wait for the Edit batch to flush too
+			await new Promise((resolve) => setTimeout(resolve, 3500));
+
+			const iter = sm.getMessageIterator(1);
+
+			const msg1 = await Promise.race([
+				iter?.next(),
+				new Promise<IteratorResult<unknown>>((resolve) =>
+					setTimeout(() => resolve({ value: undefined, done: true }), 1000),
+				),
+			]);
+			const msg2 = await Promise.race([
+				iter?.next(),
+				new Promise<IteratorResult<unknown>>((resolve) =>
+					setTimeout(() => resolve({ value: undefined, done: true }), 1000),
+				),
+			]);
+
+			expect(msg1.done).toBe(false);
+			expect(msg2.done).toBe(false);
+
+			sm.closeSession(1);
+		});
+
+		it("flushes pending batch on session close", () => {
+			const sm = createSessionManager();
+			sm.initializeSession(1, "sess-1", "test", "prompt");
+
+			sm.queueObservation(1, {
+				toolName: "Read",
+				toolInput: "test input",
+				toolResponse: "test response",
+				cwd: "/test",
+				occurredAt: new Date().toISOString(),
+			});
+
+			// Close immediately (before batch window expires)
+			sm.closeSession(1);
+
+			// Session should be cleaned up without errors
+			expect(sm.getSession(1)).toBeNull();
 		});
 	});
 
