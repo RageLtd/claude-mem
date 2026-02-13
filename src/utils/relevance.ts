@@ -123,7 +123,7 @@ export const scoreObservation = (
 	const typeImportance = calculateTypeScore(observation.type);
 
 	const ftsRank = context.ftsRanks.get(observation.id) ?? 0;
-	// Concept overlap per-observation not yet available; will be computed in Task 7
+	// Concept overlap not yet wired; planned for future iteration
 	const similarity = calculateSimilarityScore(
 		ftsRank,
 		0,

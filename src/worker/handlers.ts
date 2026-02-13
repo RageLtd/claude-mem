@@ -360,6 +360,8 @@ export const handleQueueSummary = async (
 	input: QueueSummaryInput,
 ): Promise<HandlerResponse> => {
 	const { claudeSessionId, lastUserMessage, lastAssistantMessage } = input;
+	// transcriptPath is forwarded from the hook but not yet wired to the SDK agent.
+	// Future: parse transcript to extract actual user/assistant messages.
 
 	// Validate session exists
 	const sessionResult = getSessionByClaudeId(deps.db, claudeSessionId);
@@ -513,7 +515,7 @@ export const handleGetContext = async (
 	const scored = candidates
 		.filter((o) => crossProjectEnabled || o.project === project)
 		.map((obs) => ({
-			observation: obs as import("../types/domain").Observation,
+			observation: obs,
 			score: scoreObservation(obs, scoringContext),
 		}))
 		.sort((a, b) => b.score - a.score)
