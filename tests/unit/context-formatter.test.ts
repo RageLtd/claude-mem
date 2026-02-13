@@ -327,3 +327,41 @@ describe("formatObservationFull", () => {
 		expect(output).not.toContain("Concepts:");
 	});
 });
+
+describe("formatObservationIndexRow — cross-project attribution", () => {
+	const makeObs = (project: string): Observation => ({
+		id: 42,
+		sdkSessionId: "sess-1",
+		project,
+		type: "bugfix",
+		title: "Fix auth timeout",
+		subtitle: null,
+		narrative: null,
+		facts: [],
+		concepts: [],
+		filesRead: [],
+		filesModified: [],
+		promptNumber: 1,
+		discoveryTokens: 5000,
+		createdAt: new Date().toISOString(),
+		createdAtEpoch: Date.now(),
+	});
+
+	it("adds [from: project] label for cross-project observations", () => {
+		const row = formatObservationIndexRow(
+			makeObs("other-project"),
+			"my-project",
+		);
+		expect(row).toContain("[from: other-project]");
+	});
+
+	it("does not add label for same-project observations", () => {
+		const row = formatObservationIndexRow(makeObs("my-project"), "my-project");
+		expect(row).not.toContain("[from:");
+	});
+
+	it("does not add label when no currentProject provided", () => {
+		const row = formatObservationIndexRow(makeObs("any-project"));
+		expect(row).not.toContain("[from:");
+	});
+});
