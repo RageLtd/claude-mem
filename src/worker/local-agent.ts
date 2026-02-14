@@ -92,14 +92,17 @@ const extractFilePaths = (
 };
 
 /**
- * Parses a simple summary from model text output.
- * Extracts lines matching key summary fields.
+ * Builds a ParsedSummary from the last user message and model response.
+ * The request field captures what the user asked; completed captures the model's output.
  */
-const parseSummaryFromText = (text: string): ParsedSummary => ({
-  request: text.slice(0, 500) || null,
+const buildSummaryFromResponse = (
+  lastUserMessage: string | null,
+  modelResponse: string,
+): ParsedSummary => ({
+  request: lastUserMessage || null,
   investigated: null,
   learned: null,
-  completed: null,
+  completed: modelResponse.slice(0, 500) || null,
   nextSteps: null,
   notes: null,
 });
@@ -276,7 +279,10 @@ export const createLocalAgent = (deps: LocalAgentDeps): SDKAgent => {
           { role: "user", content: userPrompt },
         ]);
 
-        const summary = parseSummaryFromText(response);
+        const summary = buildSummaryFromResponse(
+          msg.data.lastUserMessage || null,
+          response,
+        );
 
         const result = storeSummary(db, {
           claudeSessionId: session.claudeSessionId,
