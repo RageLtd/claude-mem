@@ -4,6 +4,7 @@ import {
   buildLocalSummaryPrompt,
   buildLocalSystemPrompt,
   OBSERVATION_TOOL,
+  SUMMARY_TOOL,
 } from "../../src/models/prompts";
 
 describe("local model prompts", () => {
@@ -38,13 +39,13 @@ describe("local model prompts", () => {
     expect(prompt).toContain("Applied edit");
   });
 
-  it("builds summary prompt", () => {
+  it("builds summary prompt with tool calling instruction", () => {
     const prompt = buildLocalSummaryPrompt({
       lastUserMessage: "Fix the auth bug",
       lastAssistantMessage: "I fixed it",
     });
     expect(prompt).toContain("Fix the auth bug");
-    expect(prompt).toContain("summary");
+    expect(prompt).toContain("create_summary");
   });
 
   it("exports observation tool definition with correct schema", () => {
@@ -61,5 +62,23 @@ describe("local model prompts", () => {
     expect(required).toContain("type");
     expect(required).toContain("title");
     expect(required).toContain("narrative");
+  });
+
+  it("exports summary tool definition with correct schema", () => {
+    expect(SUMMARY_TOOL.type).toBe("function");
+    expect(SUMMARY_TOOL.function.name).toBe("create_summary");
+    const params = SUMMARY_TOOL.function.parameters as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const properties = params.properties as Record<string, unknown>;
+    expect(properties).toHaveProperty("request");
+    expect(properties).toHaveProperty("investigated");
+    expect(properties).toHaveProperty("learned");
+    expect(properties).toHaveProperty("completed");
+    expect(properties).toHaveProperty("nextSteps");
+    expect(properties).toHaveProperty("notes");
+    const required = params.required as readonly string[];
+    expect(required).toEqual([]);
   });
 });

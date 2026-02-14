@@ -335,11 +335,12 @@ describe("local-agent", () => {
     }
   });
 
-  it("handles summarize messages", async () => {
-    const summaryResponse =
-      "This session focused on implementing authentication. Completed OAuth2 setup. Learned about PKCE flow. Next: add refresh token rotation.";
+  it("handles summarize messages with tool calling", async () => {
+    const summaryToolCall = `<tool_call>
+{"name": "create_summary", "arguments": {"request": "Help me add auth", "investigated": "OAuth2 providers", "learned": "PKCE flow is required for SPAs", "completed": "Implemented OAuth2 PKCE flow", "nextSteps": "Add refresh token rotation"}}
+</tool_call>`;
     const modelManager = createMockModelManager({
-      generateTextResponse: summaryResponse,
+      generateTextResponse: summaryToolCall,
     });
     const agent = createLocalAgent({ db, modelManager });
     const session = createTestSession();
@@ -359,6 +360,59 @@ describe("local-agent", () => {
     expect(messages.length).toBeGreaterThanOrEqual(1);
     const stored = messages.find((m) => m.type === "summary_stored");
     expect(stored).toBeDefined();
+
+    const summaryData = stored?.data as {
+      id: number;
+      summary: {
+        request: string | null;
+        investigated: string | null;
+        learned: string | null;
+        completed: string | null;
+        nextSteps: string | null;
+      };
+    };
+    expect(summaryData.summary.request).toBe("Help me add auth");
+    expect(summaryData.summary.investigated).toBe("OAuth2 providers");
+    expect(summaryData.summary.learned).toBe("PKCE flow is required for SPAs");
+    expect(summaryData.summary.completed).toBe("Implemented OAuth2 PKCE flow");
+    expect(summaryData.summary.nextSteps).toBe("Add refresh token rotation");
+  });
+
+  it("falls back to buildSummaryFromResponse when model skips tool call", async () => {
+    const plainResponse =
+      "Implemented OAuth2 authentication with PKCE flow for the application.";
+    const modelManager = createMockModelManager({
+      generateTextResponse: plainResponse,
+    });
+    const agent = createLocalAgent({ db, modelManager });
+    const session = createTestSession();
+
+    const input: PendingInputMessage = {
+      type: "summarize",
+      data: {
+        lastUserMessage: "Help me add auth",
+        lastAssistantMessage: "I implemented OAuth2",
+      },
+    };
+
+    const messages = await collectMessages(
+      agent.processMessages(session, fromArray([input])),
+    );
+
+    const stored = messages.find((m) => m.type === "summary_stored");
+    expect(stored).toBeDefined();
+
+    const summaryData = stored?.data as {
+      id: number;
+      summary: {
+        request: string | null;
+        completed: string | null;
+        investigated: string | null;
+      };
+    };
+    expect(summaryData.summary.request).toBe("Help me add auth");
+    expect(summaryData.summary.completed).toBe(plainResponse);
+    expect(summaryData.summary.investigated).toBeNull();
   });
 
   it("handles continuation messages by updating promptNumber", async () => {

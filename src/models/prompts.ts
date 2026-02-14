@@ -166,10 +166,10 @@ export interface SummaryPromptInput {
 }
 
 export const buildLocalSummaryPrompt = (input: SummaryPromptInput): string => {
-  return `Generate a progress summary of what was accomplished.
+  return `Summarize what was accomplished. Call the create_summary tool with relevant fields.
 
 User request: ${input.lastUserMessage}
 ${input.lastAssistantMessage ? `Assistant response: ${input.lastAssistantMessage}` : ""}
 
-Provide a brief summary covering: what was requested, what was completed, what was learned, and suggested next steps.`;
+Fill in whichever fields apply: request, investigated, learned, completed, nextSteps, notes. Omit fields you have no information for.`;
 };

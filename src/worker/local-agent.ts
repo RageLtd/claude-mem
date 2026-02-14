@@ -16,8 +16,12 @@ import {
   buildLocalSummaryPrompt,
   buildLocalSystemPrompt,
   OBSERVATION_TOOL,
+  SUMMARY_TOOL,
 } from "../models/prompts";
-import { parseToolCall } from "../models/tool-call-parser";
+import {
+  parseSummaryToolCall,
+  parseToolCall,
+} from "../models/tool-call-parser";
 import type { ParsedObservation, ParsedSummary } from "../types/domain";
 import { fromTry } from "../types/result";
 import type {
@@ -274,15 +278,29 @@ export const createLocalAgent = (deps: LocalAgentDeps): SDKAgent => {
 
         log("Processing summarize request");
 
-        const response = await modelManager.generateText([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ]);
-
-        const summary = buildSummaryFromResponse(
-          msg.data.lastUserMessage || null,
-          response,
+        const response = await modelManager.generateText(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          [SUMMARY_TOOL],
         );
+
+        const toolCall = parseSummaryToolCall(response);
+
+        const summary: ParsedSummary = toolCall
+          ? {
+              request: toolCall.arguments.request ?? null,
+              investigated: toolCall.arguments.investigated ?? null,
+              learned: toolCall.arguments.learned ?? null,
+              completed: toolCall.arguments.completed ?? null,
+              nextSteps: toolCall.arguments.nextSteps ?? null,
+              notes: toolCall.arguments.notes ?? null,
+            }
+          : buildSummaryFromResponse(
+              msg.data.lastUserMessage || null,
+              response,
+            );
 
         const result = storeSummary(db, {
           claudeSessionId: session.claudeSessionId,
