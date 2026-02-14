@@ -546,6 +546,66 @@ describe("handleGetContext — relevance scoring", () => {
     expect(body.observationCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("boosts observations with embeddings in scoring", async () => {
+    createSession(db, {
+      claudeSessionId: "sess-embed",
+      project: "embed-project",
+      userPrompt: "Test embeddings",
+    });
+
+    // Store two identical observations (same type, same time)
+    storeObservation(db, {
+      claudeSessionId: "sess-embed",
+      project: "embed-project",
+      observation: {
+        type: "discovery",
+        title: "Observation with embedding",
+        subtitle: null,
+        narrative: "Has an embedding vector",
+        facts: [],
+        concepts: [],
+        filesRead: [],
+        filesModified: [],
+      },
+      promptNumber: 1,
+    });
+
+    storeObservation(db, {
+      claudeSessionId: "sess-embed",
+      project: "embed-project",
+      observation: {
+        type: "discovery",
+        title: "Observation without embedding",
+        subtitle: null,
+        narrative: "No embedding vector",
+        facts: [],
+        concepts: [],
+        filesRead: [],
+        filesModified: [],
+      },
+      promptNumber: 1,
+    });
+
+    // Set embedding on the first observation
+    const fakeEmbedding = Buffer.from(new Float32Array([0.1, 0.2, 0.3]).buffer);
+    db.run("UPDATE observations SET embedding = ? WHERE id = 1", [
+      fakeEmbedding,
+    ]);
+
+    const result = await handleGetContext(deps, {
+      project: "embed-project",
+      limit: 10,
+    });
+
+    expect(result.status).toBe(200);
+    const body = result.body as { context: string; observationCount: number };
+    expect(body.observationCount).toBe(2);
+    // The observation with embedding should be ranked first
+    expect(body.context).toMatch(
+      /Observation with embedding[\s\S]*Observation without embedding/,
+    );
+  });
+
   it("attributes cross-project observations in formatted output", async () => {
     // Create session first (foreign key requirement)
     createSession(db, {

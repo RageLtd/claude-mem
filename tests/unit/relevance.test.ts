@@ -218,4 +218,36 @@ describe("scoreObservation", () => {
     );
     expect(recent).toBeGreaterThan(old);
   });
+
+  it("gives embedding bonus to observations with embeddings", () => {
+    const embeddingFlags = new Map<number, boolean>([[1, true]]);
+    const ctx = makeContext({ embeddingFlags });
+    const withEmbedding = scoreObservation(makeObs({ id: 1 }), ctx);
+    const withoutEmbedding = scoreObservation(makeObs({ id: 2 }), ctx);
+    expect(withEmbedding).toBeGreaterThan(withoutEmbedding);
+  });
+
+  it("applies configurable embedding bonus value", () => {
+    const embeddingFlags = new Map<number, boolean>([[1, true]]);
+    const ctx = makeContext({
+      embeddingFlags,
+      config: {
+        recencyHalfLifeDays: 2,
+        sameProjectBonus: 0.1,
+        ftsWeight: 1.0,
+        conceptWeight: 0.5,
+        embeddingBonus: 0.5,
+      },
+    });
+    const withEmbedding = scoreObservation(makeObs({ id: 1 }), ctx);
+    const withoutEmbedding = scoreObservation(makeObs({ id: 2 }), ctx);
+    expect(withEmbedding - withoutEmbedding).toBeCloseTo(0.5, 2);
+  });
+
+  it("gives no embedding bonus when embeddingFlags is not provided", () => {
+    const ctx = makeContext();
+    const score1 = scoreObservation(makeObs({ id: 1 }), ctx);
+    const score2 = scoreObservation(makeObs({ id: 2 }), ctx);
+    expect(score1).toBeCloseTo(score2, 5);
+  });
 });

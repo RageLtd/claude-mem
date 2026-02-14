@@ -534,6 +534,7 @@ interface GetCandidateObservationsInput {
 
 export interface ObservationWithRank extends Observation {
   readonly ftsRank: number;
+  readonly hasEmbedding: boolean;
 }
 
 /**
@@ -564,6 +565,7 @@ export const getCandidateObservations = (
       return rows.map((row) => ({
         ...rowToObservation(row),
         ftsRank: row.fts_rank,
+        hasEmbedding: row.embedding !== null,
       }));
     }
 
@@ -580,6 +582,7 @@ export const getCandidateObservations = (
     return rows.map((row) => ({
       ...rowToObservation(row),
       ftsRank: 0,
+      hasEmbedding: row.embedding !== null,
     }));
   });
 };
@@ -676,6 +679,7 @@ interface ObservationRow {
   discovery_tokens: number;
   created_at: string;
   created_at_epoch: number;
+  embedding: Buffer | null;
 }
 
 interface SummaryRow {

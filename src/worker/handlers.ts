@@ -487,9 +487,13 @@ export const handleGetContext = async (
 
   // Build scoring context
   const ftsRanks = new Map<number, number>();
+  const embeddingFlags = new Map<number, boolean>();
   for (const c of candidates) {
     if (c.ftsRank !== 0) {
       ftsRanks.set(c.id, Math.abs(c.ftsRank));
+    }
+    if (c.hasEmbedding) {
+      embeddingFlags.set(c.id, true);
     }
   }
 
@@ -503,11 +507,13 @@ export const handleGetContext = async (
     currentProject: project,
     cwdFiles: [],
     ftsRanks,
+    embeddingFlags,
     config: {
       recencyHalfLifeDays: Number.isNaN(halfLifeDays) ? 2 : halfLifeDays,
       sameProjectBonus: 0.1,
       ftsWeight: 1.0,
       conceptWeight: 0.5,
+      embeddingBonus: 0.15,
     },
   };
 

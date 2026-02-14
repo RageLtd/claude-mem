@@ -14,6 +14,7 @@ export interface ScoringConfig {
   readonly sameProjectBonus: number;
   readonly ftsWeight: number;
   readonly conceptWeight: number;
+  readonly embeddingBonus: number;
 }
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
@@ -21,12 +22,14 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   sameProjectBonus: 0.1,
   ftsWeight: 1.0,
   conceptWeight: 0.5,
+  embeddingBonus: 0.15,
 };
 
 export interface ScoringContext {
   readonly currentProject: string;
   readonly cwdFiles: readonly string[];
   readonly ftsRanks: Map<number, number>;
+  readonly embeddingFlags?: Map<number, boolean>;
   readonly config?: ScoringConfig;
 }
 
@@ -139,7 +142,23 @@ export const scoreObservation = (
       ? config.sameProjectBonus
       : 0;
 
-  return recency + typeImportance + similarity + fileOverlap + projectBonus;
+  // Bonus for observations that have been embedded by the local model.
+  // TODO: Replace with full cosine similarity scoring once a query embedding
+  // is available at context retrieval time (requires wiring ModelManager into
+  // the handler layer).
+  const embeddingBonus =
+    context.embeddingFlags?.get(observation.id) === true
+      ? config.embeddingBonus
+      : 0;
+
+  return (
+    recency +
+    typeImportance +
+    similarity +
+    fileOverlap +
+    projectBonus +
+    embeddingBonus
+  );
 };
 
 // ============================================================================
