@@ -8,7 +8,7 @@ import type { ToolObservation } from "../types/domain";
 import type { ToolDefinition } from "./manager";
 
 // ============================================================================
-// Tool Definition
+// Tool Definitions
 // ============================================================================
 
 export const OBSERVATION_TOOL: ToolDefinition = {
@@ -73,6 +73,45 @@ export const OBSERVATION_TOOL: ToolDefinition = {
   },
 };
 
+export const SUMMARY_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "create_summary",
+    description:
+      "Record a progress summary of what was accomplished in this session.",
+    parameters: {
+      type: "object",
+      properties: {
+        request: {
+          type: "string",
+          description: "What the user asked for",
+        },
+        investigated: {
+          type: "string",
+          description: "What was investigated or explored",
+        },
+        learned: {
+          type: "string",
+          description: "Key learnings or insights",
+        },
+        completed: {
+          type: "string",
+          description: "What was accomplished",
+        },
+        nextSteps: {
+          type: "string",
+          description: "Suggested follow-up actions",
+        },
+        notes: {
+          type: "string",
+          description: "Additional notes or context",
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 // ============================================================================
 // System Prompt
 // ============================================================================
@@ -92,7 +131,9 @@ Record OUTCOMES and INSIGHTS, not just actions:
 Use past tense: discovered, fixed, implemented, learned.
 
 Good: "Fixed missing await on getToken() causing auth failures downstream"
-Bad: "Analyzed the code and recorded findings"`;
+Bad: "Analyzed the code and recorded findings"
+
+Be concise. Title under 80 characters. Narrative under 200 words. Omit filler — every word should convey useful information.`;
 };
 
 // ============================================================================

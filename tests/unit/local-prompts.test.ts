@@ -12,6 +12,10 @@ describe("local model prompts", () => {
     expect(prompt).toContain("observer");
     expect(prompt).toContain("bugfix");
     expect(prompt).toContain("discovery");
+    // Should contain brevity instructions
+    expect(prompt).toContain("concise");
+    expect(prompt).toContain("under 80 characters");
+    expect(prompt).toContain("under 200 words");
     // Should NOT contain XML format instructions
     expect(prompt).not.toContain("<observation>");
     expect(prompt).not.toContain("</observation>");
