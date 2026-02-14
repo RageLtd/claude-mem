@@ -6,10 +6,11 @@
 import { join } from "node:path";
 import pkg from "../../package.json";
 import { createDatabase, runMigrations } from "../db/index";
+import { createModelManager } from "../models/manager";
 import { fromPromise } from "../types/result";
 import { ensureDbDir } from "../utils/fs";
 import { createBackgroundProcessor } from "./background-processor";
-import { createSDKAgent } from "./sdk-agent";
+import { createLocalAgent } from "./local-agent";
 import { createWorkerRouter } from "./service";
 import { createSessionManager } from "./session-manager";
 
@@ -45,9 +46,14 @@ const start = async (): Promise<void> => {
       const sessionManager = createSessionManager();
       log("SessionManager initialized");
 
-      // Create SDK agent (uses Claude Agent SDK with user's credentials)
-      const sdkAgent = createSDKAgent({ db });
-      log("SDKAgent initialized");
+      // Create model manager and local agent
+      const modelManager = createModelManager({});
+      log(
+        `ModelManager initialized (gen=${modelManager.getConfig().generativeModelId}, embed=${modelManager.getConfig().embeddingModelId})`,
+      );
+
+      const sdkAgent = createLocalAgent({ db, modelManager });
+      log("LocalAgent initialized");
 
       // Create router with all dependencies
       const router = createWorkerRouter({
@@ -105,6 +111,7 @@ const start = async (): Promise<void> => {
           sessionManager.closeSession(session.sessionDbId);
         }
 
+        await modelManager.dispose();
         db.close();
         server.stop();
         process.exit(0);
