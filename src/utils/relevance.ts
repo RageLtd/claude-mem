@@ -111,6 +111,7 @@ export const calculateFileOverlapScore = (
  *         + similarityScore(0-1.5)
  *         + fileOverlapScore(0-1.0)
  *         + currentProjectBonus(0.1)
+ *         + embeddingBonus(0.15)
  */
 export const scoreObservation = (
   observation: Observation,

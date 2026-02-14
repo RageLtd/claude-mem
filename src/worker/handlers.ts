@@ -22,7 +22,11 @@ import {
   formatContextIndex,
   formatObservationFull,
 } from "../utils/context-formatter";
-import { type ScoringContext, scoreObservation } from "../utils/relevance";
+import {
+  DEFAULT_SCORING_CONFIG,
+  type ScoringContext,
+  scoreObservation,
+} from "../utils/relevance";
 import { parseSince } from "../utils/temporal";
 import { escapeFts5Query, projectFromCwd } from "../utils/validation";
 import type { SessionManager } from "./session-manager";
@@ -509,11 +513,8 @@ export const handleGetContext = async (
     ftsRanks,
     embeddingFlags,
     config: {
+      ...DEFAULT_SCORING_CONFIG,
       recencyHalfLifeDays: Number.isNaN(halfLifeDays) ? 2 : halfLifeDays,
-      sameProjectBonus: 0.1,
-      ftsWeight: 1.0,
-      conceptWeight: 0.5,
-      embeddingBonus: 0.15,
     },
   };
 

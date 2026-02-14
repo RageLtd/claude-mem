@@ -551,7 +551,11 @@ export const getCandidateObservations = (
   return fromTry(() => {
     if (ftsQuery) {
       const sql = `
-				SELECT o.*, fts.rank as fts_rank
+				SELECT o.id, o.sdk_session_id, o.project, o.type, o.title, o.subtitle,
+				       o.narrative, o.facts, o.concepts, o.files_read, o.files_modified,
+				       o.prompt_number, o.discovery_tokens, o.created_at, o.created_at_epoch,
+				       (o.embedding IS NOT NULL) AS has_embedding,
+				       fts.rank as fts_rank
 				FROM observations o
 				JOIN observations_fts fts ON o.id = fts.rowid
 				WHERE observations_fts MATCH ?
@@ -559,30 +563,47 @@ export const getCandidateObservations = (
 				LIMIT ?
 			`;
       const rows = db
-        .query<ObservationRow & { fts_rank: number }, [string, number]>(sql)
+        .query<
+          Omit<ObservationRow, "embedding"> & {
+            has_embedding: number;
+            fts_rank: number;
+          },
+          [string, number]
+        >(sql)
         .all(ftsQuery, limit);
 
       return rows.map((row) => ({
-        ...rowToObservation(row),
+        ...rowToObservation({ ...row, embedding: null }),
         ftsRank: row.fts_rank,
-        hasEmbedding: row.embedding !== null,
+        hasEmbedding: row.has_embedding === 1,
       }));
     }
 
     // No FTS query — return recent from all projects
     const sql = `
-			SELECT *, 0 as fts_rank FROM observations
+			SELECT id, sdk_session_id, project, type, title, subtitle,
+			       narrative, facts, concepts, files_read, files_modified,
+			       prompt_number, discovery_tokens, created_at, created_at_epoch,
+			       (embedding IS NOT NULL) AS has_embedding,
+			       0 as fts_rank
+			FROM observations
 			ORDER BY created_at_epoch DESC
 			LIMIT ?
 		`;
     const rows = db
-      .query<ObservationRow & { fts_rank: number }, [number]>(sql)
+      .query<
+        Omit<ObservationRow, "embedding"> & {
+          has_embedding: number;
+          fts_rank: number;
+        },
+        [number]
+      >(sql)
       .all(limit);
 
     return rows.map((row) => ({
-      ...rowToObservation(row),
+      ...rowToObservation({ ...row, embedding: null }),
       ftsRank: 0,
-      hasEmbedding: row.embedding !== null,
+      hasEmbedding: row.has_embedding === 1,
     }));
   });
 };
