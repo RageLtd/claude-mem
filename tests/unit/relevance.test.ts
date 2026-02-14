@@ -4,6 +4,7 @@ import {
   calculateRecencyScore,
   calculateSimilarityScore,
   calculateTypeScore,
+  cosineSimilarity,
   type ScoringContext,
   scoreObservation,
 } from "../../src/utils/relevance";
@@ -115,6 +116,38 @@ describe("calculateFileOverlapScore", () => {
         ["src/utils/validation.ts", "src/hooks/logic.ts"],
       ),
     ).toBe(1.0);
+  });
+});
+
+describe("cosineSimilarity", () => {
+  it("returns 1.0 for identical vectors", () => {
+    const a = new Float32Array([1, 0, 0]);
+    const b = new Float32Array([1, 0, 0]);
+    expect(cosineSimilarity(a, b)).toBeCloseTo(1.0);
+  });
+
+  it("returns 0.0 for orthogonal vectors", () => {
+    const a = new Float32Array([1, 0, 0]);
+    const b = new Float32Array([0, 1, 0]);
+    expect(cosineSimilarity(a, b)).toBeCloseTo(0.0);
+  });
+
+  it("returns -1.0 for opposite vectors", () => {
+    const a = new Float32Array([1, 0, 0]);
+    const b = new Float32Array([-1, 0, 0]);
+    expect(cosineSimilarity(a, b)).toBeCloseTo(-1.0);
+  });
+
+  it("handles normalized vectors", () => {
+    const a = new Float32Array([0.6, 0.8]);
+    const b = new Float32Array([0.8, 0.6]);
+    expect(cosineSimilarity(a, b)).toBeCloseTo(0.96);
+  });
+
+  it("returns 0 for zero-length vectors", () => {
+    const a = new Float32Array([0, 0, 0]);
+    const b = new Float32Array([1, 0, 0]);
+    expect(cosineSimilarity(a, b)).toBe(0);
   });
 });
 
