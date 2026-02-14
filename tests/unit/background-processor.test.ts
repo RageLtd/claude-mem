@@ -1,44 +1,40 @@
 /**
  * Tests for BackgroundProcessor - manages session processing with proper cleanup.
- * Uses mocked SDK module to avoid spawning actual Claude Code subprocess.
+ * Uses a mock SDKAgent to avoid external dependencies.
  */
 
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   createDatabase,
   createSession,
   runMigrations,
 } from "../../src/db/index";
-import { createSessionManager } from "../../src/worker/session-manager";
-
-// Track what the mock query should return
-let mockQueryMessages: unknown[] = [];
-
-// Mock the SDK module - must be done before importing modules that use it
-mock.module("@anthropic-ai/claude-agent-sdk", () => ({
-  query: mock(() => {
-    return (async function* () {
-      for (const msg of mockQueryMessages) {
-        yield msg;
-      }
-    })();
-  }),
-}));
-
-// Import after mocking
+import type { SDKAgent, SDKAgentMessage } from "../../src/worker/agent-types";
 import {
   type BackgroundProcessorDeps,
   createBackgroundProcessor,
 } from "../../src/worker/background-processor";
-import { createSDKAgent } from "../../src/worker/sdk-agent";
+import { createSessionManager } from "../../src/worker/session-manager";
 
 /**
- * Helper to set up what the mock query will return.
+ * Creates a mock SDKAgent that yields "acknowledged" for every input message.
  */
-function setMockQueryResponse(messages: unknown[]): void {
-  mockQueryMessages = messages;
-}
+const createMockAgent = (
+  overrideMessages?: readonly SDKAgentMessage[],
+): SDKAgent => ({
+  processMessages: async function* (_session, inputMessages) {
+    if (overrideMessages) {
+      for (const msg of overrideMessages) {
+        yield msg;
+      }
+      return;
+    }
+    for await (const _msg of inputMessages) {
+      yield { type: "acknowledged" };
+    }
+  },
+});
 
 describe("BackgroundProcessor", () => {
   let db: Database;
@@ -46,8 +42,6 @@ describe("BackgroundProcessor", () => {
   beforeEach(() => {
     db = createDatabase(":memory:");
     runMigrations(db);
-    // Reset mock messages
-    setMockQueryResponse([]);
   });
 
   afterEach(() => {
@@ -57,7 +51,7 @@ describe("BackgroundProcessor", () => {
   describe("createBackgroundProcessor", () => {
     it("creates a processor with required methods", () => {
       const sessionManager = createSessionManager();
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const deps: BackgroundProcessorDeps = {
         sessionManager,
@@ -77,7 +71,7 @@ describe("BackgroundProcessor", () => {
   describe("start/stop", () => {
     it("starts polling and can be stopped", async () => {
       const sessionManager = createSessionManager();
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -98,7 +92,7 @@ describe("BackgroundProcessor", () => {
 
     it("does not start multiple times", () => {
       const sessionManager = createSessionManager();
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -115,18 +109,7 @@ describe("BackgroundProcessor", () => {
   describe("session processing tracking", () => {
     it("tracks active processing count", async () => {
       const sessionManager = createSessionManager();
-
-      // Set up a mock response that takes time
-      setMockQueryResponse([
-        {
-          type: "assistant",
-          message: {
-            content: [{ type: "text", text: "Processing..." }],
-          },
-        },
-      ]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -155,18 +138,7 @@ describe("BackgroundProcessor", () => {
 
     it("does not start duplicate processing for same session", async () => {
       const sessionManager = createSessionManager();
-
-      // Mock returns acknowledgment
-      setMockQueryResponse([
-        {
-          type: "assistant",
-          message: {
-            content: [{ type: "text", text: "Acknowledged" }],
-          },
-        },
-      ]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -196,17 +168,7 @@ describe("BackgroundProcessor", () => {
   describe("awaitCompletion", () => {
     it("waits for all processing to complete", async () => {
       const sessionManager = createSessionManager();
-
-      setMockQueryResponse([
-        {
-          type: "assistant",
-          message: {
-            content: [{ type: "text", text: "Done" }],
-          },
-        },
-      ]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -236,11 +198,7 @@ describe("BackgroundProcessor", () => {
 
     it("times out if processing takes too long", async () => {
       const sessionManager = createSessionManager();
-
-      // Empty response - processing will wait for messages
-      setMockQueryResponse([]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -272,10 +230,7 @@ describe("BackgroundProcessor", () => {
   describe("error handling", () => {
     it("handles empty sessions gracefully", async () => {
       const sessionManager = createSessionManager();
-
-      setMockQueryResponse([]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -301,22 +256,13 @@ describe("BackgroundProcessor", () => {
       const storedEvents: Array<{ sessionId: string; observationId: number }> =
         [];
 
-      // Mock returns observation XML
-      setMockQueryResponse([
+      // Mock agent that yields observation_stored
+      const sdkAgent = createMockAgent([
         {
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "text",
-                text: `<observation><type>feature</type><title>Test</title></observation>`,
-              },
-            ],
-          },
+          type: "observation_stored",
+          data: { id: 1, observation: { type: "feature", title: "Test" } },
         },
       ]);
-
-      const sdkAgent = createSDKAgent({ db });
 
       const processor = createBackgroundProcessor({
         sessionManager,
@@ -357,28 +303,13 @@ describe("BackgroundProcessor", () => {
       const sessionManager = createSessionManager();
       const storedEvents: Array<{ sessionId: string; summaryId: number }> = [];
 
-      // Mock returns summary XML
-      setMockQueryResponse([
+      // Mock agent that yields summary_stored
+      const sdkAgent = createMockAgent([
         {
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "text",
-                text: `<summary>
-							<request>Test request</request>
-							<investigated>Things</investigated>
-							<learned>Stuff</learned>
-							<completed>Done</completed>
-							<next_steps>More</next_steps>
-						</summary>`,
-              },
-            ],
-          },
+          type: "summary_stored",
+          data: { id: 1, summary: { request: "Test request" } },
         },
       ]);
-
-      const sdkAgent = createSDKAgent({ db });
 
       const processor = createBackgroundProcessor({
         sessionManager,

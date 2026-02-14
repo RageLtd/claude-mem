@@ -16,11 +16,11 @@ import type {
   ModelManagerConfig,
 } from "../../src/models/manager";
 import type { ToolObservation } from "../../src/types/domain";
-import { createLocalAgent } from "../../src/worker/local-agent";
 import type {
   PendingInputMessage,
   SDKAgentMessage,
-} from "../../src/worker/sdk-agent";
+} from "../../src/worker/agent-types";
+import { createLocalAgent } from "../../src/worker/local-agent";
 import type { ActiveSession } from "../../src/worker/session-manager";
 
 // ============================================================================

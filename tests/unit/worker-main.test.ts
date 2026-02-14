@@ -1,42 +1,34 @@
 /**
  * Tests for worker main integration.
- * Tests that SessionManager and SDKAgent are properly wired together.
- * Uses mocked SDK module to avoid spawning actual Claude Code subprocess.
+ * Tests that SessionManager and agent are properly wired together.
+ * Uses a mock SDKAgent to avoid external dependencies.
  */
 
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   createDatabase,
   createSession,
   runMigrations,
 } from "../../src/db/index";
-
-// Track what the mock query should return
-let mockQueryMessages: unknown[] = [];
-
-// Mock the SDK module - must be done before importing modules that use it
-mock.module("@anthropic-ai/claude-agent-sdk", () => ({
-  query: mock(() => {
-    return (async function* () {
-      for (const msg of mockQueryMessages) {
-        yield msg;
-      }
-    })();
-  }),
-}));
-
-// Import after mocking
-import { createSDKAgent } from "../../src/worker/sdk-agent";
+import type {
+  PendingInputMessage,
+  SDKAgent,
+  SDKAgentMessage,
+} from "../../src/worker/agent-types";
 import { createWorkerRouter } from "../../src/worker/service";
 import { createSessionManager } from "../../src/worker/session-manager";
 
 /**
- * Helper to set up what the mock query will return.
+ * Creates a mock SDKAgent that yields "acknowledged" for every input message.
  */
-function setMockQueryResponse(messages: unknown[]): void {
-  mockQueryMessages = messages;
-}
+const createMockAgent = (): SDKAgent => ({
+  processMessages: async function* (_session, inputMessages) {
+    for await (const _msg of inputMessages) {
+      yield { type: "acknowledged" };
+    }
+  },
+});
 
 describe("worker main integration", () => {
   let db: Database;
@@ -44,8 +36,6 @@ describe("worker main integration", () => {
   beforeEach(() => {
     db = createDatabase(":memory:");
     runMigrations(db);
-    // Reset mock messages
-    setMockQueryResponse([]);
   });
 
   afterEach(() => {
@@ -55,7 +45,7 @@ describe("worker main integration", () => {
   describe("full integration", () => {
     it("creates all components with proper dependencies", () => {
       const sessionManager = createSessionManager();
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
       const router = createWorkerRouter({ db, sessionManager });
 
       expect(sessionManager).toBeDefined();
@@ -63,25 +53,9 @@ describe("worker main integration", () => {
       expect(router).toBeDefined();
     });
 
-    it("routes messages from SessionManager to SDKAgent", async () => {
+    it("routes messages from SessionManager to agent", async () => {
       const sessionManager = createSessionManager();
-
-      // Set up mock to return an observation
-      setMockQueryResponse([
-        {
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "text",
-                text: `<observation><type>discovery</type><title>Test Discovery</title></observation>`,
-              },
-            ],
-          },
-        },
-      ]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       // Create session in database first (for foreign key constraint)
       createSession(db, {
@@ -111,36 +85,39 @@ describe("worker main integration", () => {
       const messages = sessionManager.getMessageIterator(1);
       expect(messages).not.toBeNull();
 
-      // Process messages through SDK agent
-      const agentMessages = sdkAgent.processMessages(session, {
+      // Process messages through agent
+      const inputMessages: AsyncIterable<PendingInputMessage> = {
         [Symbol.asyncIterator]: () => ({
           next: async () => {
             const result = await messages?.next();
             if (result.done) {
-              return { done: true, value: undefined };
+              return { done: true as const, value: undefined };
             }
             // Transform PendingMessage to PendingInputMessage
             const msg = result.value;
             return {
-              done: false,
+              done: false as const,
               value: {
                 type: msg.type,
                 data:
                   msg.type === "observation"
                     ? { observation: msg.data.observation }
                     : msg.data,
-              },
+              } as PendingInputMessage,
             };
           },
         }),
-      });
+      };
 
       // Close the session to end the iterator
       setTimeout(() => sessionManager.closeSession(1), 50);
 
       // Collect agent output
-      const outputs: { type: string }[] = [];
-      for await (const output of agentMessages) {
+      const outputs: SDKAgentMessage[] = [];
+      for await (const output of sdkAgent.processMessages(
+        session,
+        inputMessages,
+      )) {
         outputs.push(output);
         // Break after first meaningful output to avoid timeout
         if (
@@ -161,23 +138,7 @@ describe("worker main integration", () => {
     it("processes observations as they are queued", async () => {
       const sessionManager = createSessionManager();
       const storedObservations: unknown[] = [];
-
-      // Set up mock to return observations
-      setMockQueryResponse([
-        {
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "text",
-                text: `<observation><type>discovery</type><title>Code Pattern Found</title><narrative>Discovered a code pattern</narrative></observation>`,
-              },
-            ],
-          },
-        },
-      ]);
-
-      const sdkAgent = createSDKAgent({ db });
+      const sdkAgent = createMockAgent();
 
       // Create session in database first (for foreign key constraint)
       createSession(db, {
@@ -211,23 +172,23 @@ describe("worker main integration", () => {
       setTimeout(() => sessionManager.closeSession(1), 100);
 
       // Process and collect outputs
-      const transformedMessages = {
+      const transformedMessages: AsyncIterable<PendingInputMessage> = {
         [Symbol.asyncIterator]: () => ({
           next: async () => {
             const result = await messages?.next();
             if (result.done) {
-              return { done: true, value: undefined };
+              return { done: true as const, value: undefined };
             }
             const msg = result.value;
             return {
-              done: false,
+              done: false as const,
               value: {
                 type: msg.type,
                 data:
                   msg.type === "observation"
                     ? { observation: msg.data.observation }
                     : msg.data,
-              },
+              } as PendingInputMessage,
             };
           },
         }),

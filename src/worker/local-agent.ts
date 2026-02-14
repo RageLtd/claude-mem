@@ -24,7 +24,7 @@ import type {
   PendingInputMessage,
   SDKAgent,
   SDKAgentMessage,
-} from "./sdk-agent";
+} from "./agent-types";
 import type { ActiveSession } from "./session-manager";
 
 // ============================================================================
