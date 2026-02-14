@@ -34,7 +34,7 @@ describe("hook logic", () => {
   });
 
   describe("processContextHook (SessionStart)", () => {
-    it("fetches context and returns additionalContext", async () => {
+    it("fetches context and returns additionalContext with type breakdown", async () => {
       mockFetch.mockImplementation(() =>
         Promise.resolve({
           ok: true,
@@ -43,6 +43,7 @@ describe("hook logic", () => {
               context: "## Previous work\n- Did stuff",
               observationCount: 5,
               summaryCount: 2,
+              typeCounts: { decision: 2, feature: 3 },
             }),
         }),
       );
@@ -59,7 +60,90 @@ describe("hook logic", () => {
       expect(result.hookSpecificOutput?.additionalContext).toContain(
         "Previous work",
       );
+      expect(result.systemMessage).toContain("5 memories loaded");
+      expect(result.systemMessage).toContain("2 decisions");
+      expect(result.systemMessage).toContain("3 features");
+      expect(result.systemMessage).toContain("2 session summaries");
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("includes type counts in system message", async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              context: "# test context\n\nSome observations",
+              observationCount: 5,
+              summaryCount: 2,
+              typeCounts: { decision: 2, feature: 3 },
+            }),
+        }),
+      );
+
+      const input: SessionStartInput = {
+        session_id: "session-123",
+        cwd: "/projects/test",
+        source: "startup",
+      };
+
+      const result = await processContextHook(deps, input);
+
+      expect(result.systemMessage).toContain("5 memories loaded");
+      expect(result.systemMessage).toContain("2 decisions");
+      expect(result.systemMessage).toContain("3 features");
+      expect(result.systemMessage).toContain("2 session summaries");
+    });
+
+    it("uses source-aware prefix for clear", async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              context: "# test context\n\nSome observations",
+              observationCount: 3,
+              summaryCount: 0,
+              typeCounts: { feature: 3 },
+            }),
+        }),
+      );
+
+      const input: SessionStartInput = {
+        session_id: "session-123",
+        cwd: "/projects/test",
+        source: "clear",
+      };
+
+      const result = await processContextHook(deps, input);
+
+      expect(result.systemMessage).toContain("Fresh session");
+      expect(result.systemMessage).toContain("3 memories loaded");
+    });
+
+    it("shows no-context message when no observations", async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              context: "# test recent context\n\nNo previous sessions found.",
+              observationCount: 0,
+              summaryCount: 0,
+              typeCounts: {},
+            }),
+        }),
+      );
+
+      const input: SessionStartInput = {
+        session_id: "session-123",
+        cwd: "/projects/test",
+        source: "startup",
+      };
+
+      const result = await processContextHook(deps, input);
+
+      expect(result.systemMessage).toContain("No previous context");
     });
 
     it("returns empty context when no project detected", async () => {
