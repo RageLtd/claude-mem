@@ -121,6 +121,63 @@ describe("hook logic", () => {
       expect(result.systemMessage).toContain("3 memories loaded");
     });
 
+    it("uses source-aware prefix for resume", async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              context: "# test context\n\nSome observations",
+              observationCount: 4,
+              summaryCount: 1,
+              typeCounts: { decision: 2, bugfix: 2 },
+            }),
+        }),
+      );
+
+      const input: SessionStartInput = {
+        session_id: "session-123",
+        cwd: "/projects/test",
+        source: "resume",
+      };
+
+      const result = await processContextHook(deps, input);
+
+      expect(result.systemMessage).toContain("Resumed");
+      expect(result.systemMessage).toContain("4 memories loaded");
+      expect(result.systemMessage).toContain("2 decisions");
+      expect(result.systemMessage).toContain("2 bugfixes");
+      expect(result.systemMessage).toContain("1 session summary");
+    });
+
+    it("uses source-aware prefix for compact", async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              context: "# test context\n\nSome observations",
+              observationCount: 7,
+              summaryCount: 0,
+              typeCounts: { feature: 4, refactor: 3 },
+            }),
+        }),
+      );
+
+      const input: SessionStartInput = {
+        session_id: "session-123",
+        cwd: "/projects/test",
+        source: "compact",
+      };
+
+      const result = await processContextHook(deps, input);
+
+      expect(result.systemMessage).toContain("Compacted");
+      expect(result.systemMessage).toContain("7 memories loaded");
+      expect(result.systemMessage).toContain("4 features");
+      expect(result.systemMessage).toContain("3 refactors");
+    });
+
     it("shows no-context message when no observations", async () => {
       mockFetch.mockImplementation(() =>
         Promise.resolve({

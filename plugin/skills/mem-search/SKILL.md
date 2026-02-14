@@ -176,7 +176,8 @@ Context endpoint returns:
   "context": "# project recent context\n...",
   "observationCount": 10,
   "summaryCount": 3,
-  "format": "index"
+  "format": "index",
+  "typeCounts": { "decision": 3, "feature": 5, "bugfix": 1, "discovery": 1 }
 }
 ```
 
