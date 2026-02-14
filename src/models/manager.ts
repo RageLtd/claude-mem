@@ -1,15 +1,20 @@
 /**
  * Model lifecycle manager for local ONNX inference.
  * Handles model download, caching, and lazy loading via Transformers.js.
+ *
+ * Uses AutoTokenizer + AutoModelForCausalLM directly for text generation
+ * (rather than the pipeline API) because the pipeline's apply_chat_template
+ * call doesn't pass tools or enable_thinking through to the Jinja template.
+ * See: node_modules/@huggingface/transformers/src/pipelines.js:1024
  */
 
 import { join } from "node:path";
 import type {
   DataType,
   FeatureExtractionPipeline,
+  PreTrainedModel,
+  PreTrainedTokenizer,
   Tensor,
-  TextGenerationOutput,
-  TextGenerationPipeline,
 } from "@huggingface/transformers";
 
 // ============================================================================
@@ -76,16 +81,6 @@ const hasDispose = (
   "dispose" in value &&
   typeof (value as Record<string, unknown>).dispose === "function";
 
-/** Extract generated text from a TextGenerationOutput entry */
-const extractGeneratedText = (output: TextGenerationOutput): string => {
-  const generated = output[0]?.generated_text;
-  if (Array.isArray(generated)) {
-    const last = generated[generated.length - 1];
-    return typeof last === "string" ? last : (last?.content ?? "");
-  }
-  return typeof generated === "string" ? generated : "";
-};
-
 // ============================================================================
 // Factory
 // ============================================================================
@@ -105,23 +100,35 @@ export const createModelManager = (deps: ModelManagerDeps): ModelManager => {
       deps.cacheDir || process.env.CLAUDE_MEM_MODEL_DIR || DEFAULT_CACHE_DIR,
   };
 
-  // Lazy-loaded pipeline references
-  let generativePipeline: TextGenerationPipeline | null = null;
+  // Lazy-loaded model references
+  let tokenizer: PreTrainedTokenizer | null = null;
+  let generativeModel: PreTrainedModel | null = null;
   let embeddingPipeline: FeatureExtractionPipeline | null = null;
 
-  const getGenerativePipeline = async (): Promise<TextGenerationPipeline> => {
-    if (!generativePipeline) {
-      const { pipeline } = await import("@huggingface/transformers");
-      generativePipeline = (await pipeline(
-        "text-generation" as "text-generation",
+  const getGenerativeComponents = async (): Promise<{
+    tokenizer: PreTrainedTokenizer;
+    model: PreTrainedModel;
+  }> => {
+    if (!tokenizer || !generativeModel) {
+      const { AutoTokenizer, AutoModelForCausalLM } = await import(
+        "@huggingface/transformers"
+      );
+      tokenizer = await AutoTokenizer.from_pretrained(
+        config.generativeModelId,
+        { cache_dir: config.cacheDir },
+      );
+      generativeModel = await AutoModelForCausalLM.from_pretrained(
         config.generativeModelId,
         {
           dtype: config.dtype as DataType,
           cache_dir: config.cacheDir,
         },
-      )) as TextGenerationPipeline;
+      );
     }
-    return generativePipeline;
+    return {
+      tokenizer: tokenizer as PreTrainedTokenizer,
+      model: generativeModel as PreTrainedModel,
+    };
   };
 
   const getEmbeddingPipeline = async (): Promise<FeatureExtractionPipeline> => {
@@ -140,21 +147,49 @@ export const createModelManager = (deps: ModelManagerDeps): ModelManager => {
     messages: readonly ChatMessage[],
     tools?: readonly ToolDefinition[],
   ): Promise<string> => {
-    const gen = await getGenerativePipeline();
+    const gen = await getGenerativeComponents();
     const chatInput = messages.map((m) => ({
       role: m.role,
       content: m.content,
     }));
-    const genOptions: Record<string, unknown> = {
+
+    // Apply chat template with tools and enable_thinking control.
+    // The pipeline API doesn't pass these through to apply_chat_template,
+    // which is why we use AutoTokenizer + AutoModelForCausalLM directly.
+    const templateOptions: Record<string, unknown> = {
+      tokenize: false,
+      add_generation_prompt: true,
+    };
+    if (tools && tools.length > 0) {
+      templateOptions.tools = tools;
+      // Disable Qwen3 thinking mode when tool calling — thinking mode
+      // causes the model to generate free-form text instead of <tool_call> blocks
+      templateOptions.enable_thinking = false;
+    }
+
+    const prompt = gen.tokenizer.apply_chat_template(
+      chatInput,
+      templateOptions,
+    ) as string;
+
+    const inputs = gen.tokenizer(prompt, { return_tensor: true });
+    const inputLength = (inputs.input_ids as Tensor).dims[1];
+
+    const outputIds = await gen.model.generate({
+      ...inputs,
       max_new_tokens: 512,
       temperature: 0.1,
       do_sample: true,
-    };
-    if (tools && tools.length > 0) {
-      genOptions.tools = tools;
-    }
-    const output = (await gen(chatInput, genOptions)) as TextGenerationOutput;
-    return extractGeneratedText(output);
+    });
+
+    // Decode only the generated tokens (skip the prompt)
+    const allIds = (outputIds as Tensor).tolist()[0] as number[];
+    const generatedIds = allIds.slice(inputLength);
+    const decoded = gen.tokenizer.decode(generatedIds, {
+      skip_special_tokens: true,
+    });
+
+    return decoded;
   };
 
   const computeEmbedding = async (text: string): Promise<Float32Array> => {
@@ -167,13 +202,14 @@ export const createModelManager = (deps: ModelManagerDeps): ModelManager => {
   };
 
   const dispose = async (): Promise<void> => {
-    if (hasDispose(generativePipeline)) {
-      await generativePipeline.dispose();
+    if (hasDispose(generativeModel)) {
+      await generativeModel.dispose();
     }
     if (hasDispose(embeddingPipeline)) {
       await embeddingPipeline.dispose();
     }
-    generativePipeline = null;
+    tokenizer = null;
+    generativeModel = null;
     embeddingPipeline = null;
   };
 
