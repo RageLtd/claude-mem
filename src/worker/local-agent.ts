@@ -1,7 +1,7 @@
 /**
  * Local agent for observation extraction using Transformers.js.
- * Replaces the SDK agent with local ONNX model inference.
- * Implements the same SDKAgent interface for drop-in compatibility.
+ * Standalone functions for processing observations and summaries
+ * through the local ONNX model, called by message-router.
  */
 
 import type { Database } from "bun:sqlite";

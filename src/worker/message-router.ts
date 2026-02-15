@@ -6,23 +6,13 @@
  * No timers, no polling, no per-session state. Drain triggered at enqueue time.
  */
 
-import type { Database } from "bun:sqlite";
 import { getSessionByClaudeId, updateSessionStatus } from "../db/index";
-import type { ModelManager } from "../models/manager";
 import {
+  type LocalAgentDeps,
   processObservation,
   processSummary,
   type SessionContext,
 } from "./local-agent";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface ProcessMessageDeps {
-  readonly db: Database;
-  readonly modelManager: ModelManager;
-}
 
 export interface ObservationData {
   readonly toolName: string;
@@ -100,7 +90,7 @@ export const createMessageRouter = (deps: MessageRouterDeps): MessageRouter => {
 // ============================================================================
 
 export const createProcessMessage = (
-  deps: ProcessMessageDeps,
+  deps: LocalAgentDeps,
 ): ((msg: RouterMessage) => Promise<void>) => {
   return async (msg: RouterMessage): Promise<void> => {
     const { db } = deps;
