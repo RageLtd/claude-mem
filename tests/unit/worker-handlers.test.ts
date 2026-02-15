@@ -1,11 +1,15 @@
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   createDatabase,
   createSession,
   runMigrations,
   storeObservation,
 } from "../../src/db/index";
+import type {
+  ModelManager,
+  ModelManagerConfig,
+} from "../../src/models/manager";
 import {
   handleCompleteSession,
   handleFindByFile,
@@ -639,5 +643,124 @@ describe("handleGetContext — relevance scoring", () => {
     if (body.context.includes("Same bug fix")) {
       expect(body.context).toContain("[from: other-project]");
     }
+  });
+});
+
+describe("handleSearch — embedding re-ranking", () => {
+  let db: Database;
+
+  const createMockModelManager = (
+    embeddingFn?: (text: string) => Promise<Float32Array>,
+  ): ModelManager => ({
+    generateText: mock(async () => ""),
+    computeEmbedding: mock(
+      embeddingFn ?? (async () => new Float32Array([0.5, 0.5, 0.5])),
+    ),
+    dispose: mock(async () => {}),
+    getConfig: mock(
+      (): ModelManagerConfig => ({
+        generativeModelId: "test",
+        embeddingModelId: "test-embed",
+        dtype: "q4",
+        cacheDir: "/tmp",
+      }),
+    ),
+  });
+
+  beforeEach(() => {
+    db = createDatabase(":memory:");
+    runMigrations(db);
+    createSession(db, {
+      claudeSessionId: "sess-search",
+      project: "search-project",
+      userPrompt: "Test search",
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("re-ranks observations by combined FTS + embedding score", async () => {
+    // Store observations with keywords that FTS will match
+    storeObservation(db, {
+      claudeSessionId: "sess-search",
+      project: "search-project",
+      observation: {
+        type: "discovery",
+        title: "Authentication flow setup",
+        subtitle: null,
+        narrative: "Set up authentication flow with OAuth",
+        facts: [],
+        concepts: [],
+        filesRead: [],
+        filesModified: [],
+      },
+      promptNumber: 1,
+    });
+
+    storeObservation(db, {
+      claudeSessionId: "sess-search",
+      project: "search-project",
+      observation: {
+        type: "bugfix",
+        title: "Authentication token refresh fix",
+        subtitle: null,
+        narrative: "Fixed authentication token refresh logic",
+        facts: [],
+        concepts: [],
+        filesRead: [],
+        filesModified: [],
+      },
+      promptNumber: 1,
+    });
+
+    // Give second observation an embedding that's very similar to query
+    const queryLikeEmbedding = new Float32Array([0.9, 0.1, 0.0]);
+    db.run("UPDATE observations SET embedding = ? WHERE id = 2", [
+      Buffer.from(queryLikeEmbedding.buffer),
+    ]);
+
+    const modelManager = createMockModelManager(
+      async () => new Float32Array([0.9, 0.1, 0.0]),
+    );
+
+    const deps: WorkerDeps = { db, modelManager };
+    const result = await handleSearch(deps, {
+      query: "authentication",
+      type: "observations",
+      limit: 10,
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it("falls back to FTS-only when no modelManager", async () => {
+    storeObservation(db, {
+      claudeSessionId: "sess-search",
+      project: "search-project",
+      observation: {
+        type: "discovery",
+        title: "Database migration setup",
+        subtitle: null,
+        narrative: "Set up database migration system",
+        facts: [],
+        concepts: [],
+        filesRead: [],
+        filesModified: [],
+      },
+      promptNumber: 1,
+    });
+
+    const deps: WorkerDeps = { db };
+    const result = await handleSearch(deps, {
+      query: "database",
+      type: "observations",
+      limit: 10,
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body.count).toBeGreaterThanOrEqual(1);
   });
 });

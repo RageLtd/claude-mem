@@ -259,6 +259,57 @@ describe("message-router integration", () => {
     expect(session?.status).toBe("completed");
   });
 
+  it("processes embed message by storing computed embedding", async () => {
+    const modelManager = createMockModelManager();
+    const processMessage = createProcessMessage({ db, modelManager });
+    const router = createMessageRouter({ processMessage });
+
+    // Store an observation first so the embed can update it
+    const obsResult = db.run(
+      `INSERT INTO observations
+       (sdk_session_id, project, type, title, narrative, facts, concepts,
+        files_read, files_modified, prompt_number, discovery_tokens, created_at, created_at_epoch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "test-session-int",
+        "test-project",
+        "discovery",
+        "Test obs",
+        "Narrative",
+        "[]",
+        "[]",
+        "[]",
+        "[]",
+        1,
+        0,
+        new Date().toISOString(),
+        Date.now(),
+      ],
+    );
+    const obsId = Number(obsResult.lastInsertRowid);
+
+    router.enqueue({
+      type: "embed",
+      claudeSessionId: "test-session-int",
+      data: {
+        observationId: obsId,
+        title: "Test obs",
+        narrative: "Narrative",
+      },
+    });
+
+    await router.shutdown();
+
+    // Verify embedding was stored
+    const row = db
+      .query<{ embedding: Buffer | null }, [number]>(
+        "SELECT embedding FROM observations WHERE id = ?",
+      )
+      .get(obsId);
+    expect(row?.embedding).not.toBeNull();
+    expect(modelManager.computeEmbedding).toHaveBeenCalledTimes(1);
+  });
+
   it("skips messages for unknown sessions", async () => {
     const modelManager = createMockModelManager();
     const processMessage = createProcessMessage({ db, modelManager });

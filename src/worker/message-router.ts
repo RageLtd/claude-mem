@@ -6,7 +6,12 @@
  * No timers, no polling, no per-session state. Drain triggered at enqueue time.
  */
 
-import { getSessionByClaudeId, updateSessionStatus } from "../db/index";
+import {
+  getSessionByClaudeId,
+  updateObservationEmbedding,
+  updateSessionStatus,
+} from "../db/index";
+import { buildEmbeddingText } from "../utils/embedding";
 import {
   type LocalAgentDeps,
   processObservation,
@@ -30,12 +35,22 @@ export interface CompleteData {
   readonly reason: string;
 }
 
-export type RouterMessageType = "observation" | "summarize" | "complete";
+export interface EmbedData {
+  readonly observationId: number;
+  readonly title: string;
+  readonly narrative: string;
+}
+
+export type RouterMessageType =
+  | "observation"
+  | "summarize"
+  | "complete"
+  | "embed";
 
 export interface RouterMessage {
   readonly type: RouterMessageType;
   readonly claudeSessionId: string;
-  readonly data: ObservationData | SummarizeData | CompleteData;
+  readonly data: ObservationData | SummarizeData | CompleteData | EmbedData;
 }
 
 export interface MessageRouterDeps {
@@ -94,6 +109,24 @@ export const createProcessMessage = (
 ): ((msg: RouterMessage) => Promise<void>) => {
   return async (msg: RouterMessage): Promise<void> => {
     const { db } = deps;
+
+    // Embed messages only need observation ID + model — no session context
+    if (msg.type === "embed") {
+      const data = msg.data as EmbedData;
+      const text = buildEmbeddingText(data);
+      const embedding = await deps.modelManager.computeEmbedding(text);
+      const result = updateObservationEmbedding(
+        db,
+        data.observationId,
+        embedding,
+      );
+      if (!result.ok) {
+        log(
+          `Failed to store embedding for #${data.observationId}: ${result.error.message}`,
+        );
+      }
+      return;
+    }
 
     const sessionResult = getSessionByClaudeId(db, msg.claudeSessionId);
     if (!sessionResult.ok || !sessionResult.value) {

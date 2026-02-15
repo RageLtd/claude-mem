@@ -27,7 +27,7 @@ import type {
   ParsedSummary,
   ToolObservation,
 } from "../types/domain";
-import { err, fromTry, ok, type Result } from "../types/result";
+import { err, ok, type Result } from "../types/result";
 
 // ============================================================================
 // Types
@@ -115,37 +115,6 @@ const buildSummaryFromResponse = (
   notes: null,
 });
 
-/**
- * Stores the embedding for an observation asynchronously.
- */
-const storeEmbedding = (
-  db: Database,
-  modelManager: ModelManager,
-  observationId: number,
-  title: string,
-  narrative: string,
-): void => {
-  const embeddingText = `${title} ${narrative}`;
-  modelManager
-    .computeEmbedding(embeddingText)
-    .then((embedding) => {
-      const result = fromTry(() =>
-        db.run("UPDATE observations SET embedding = ? WHERE id = ?", [
-          Buffer.from(embedding.buffer),
-          observationId,
-        ]),
-      );
-      if (!result.ok) {
-        log(`Failed to store embedding: ${result.error.message}`);
-      }
-    })
-    .catch((e) => {
-      log(
-        `Embedding computation failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    });
-};
-
 // ============================================================================
 // Standalone functions (used by message-router)
 // ============================================================================
@@ -218,14 +187,6 @@ export const processObservation = async (
   }
 
   log(`Observation stored with id=${result.value}`);
-  storeEmbedding(
-    db,
-    modelManager,
-    result.value,
-    parsed.title || "",
-    parsed.narrative || "",
-  );
-
   return ok(result.value);
 };
 

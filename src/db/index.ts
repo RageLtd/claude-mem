@@ -609,6 +609,99 @@ export const getCandidateObservations = (
 };
 
 // ============================================================================
+// Embedding Operations
+// ============================================================================
+
+interface GetEmbeddingsByIdsInput {
+  readonly ids: readonly number[];
+}
+
+/**
+ * Fetches embedding BLOBs for specific observation IDs.
+ * Returns a map of observation ID to Float32Array embedding.
+ */
+export const getEmbeddingsByIds = (
+  db: Database,
+  input: GetEmbeddingsByIdsInput,
+): Result<Map<number, Float32Array>> => {
+  const { ids } = input;
+  if (ids.length === 0) return ok(new Map());
+
+  return fromTry(() => {
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db
+      .query<{ id: number; embedding: Buffer }, number[]>(
+        `SELECT id, embedding FROM observations WHERE id IN (${placeholders}) AND embedding IS NOT NULL`,
+      )
+      .all(...ids);
+
+    const result = new Map<number, Float32Array>();
+    for (const row of rows) {
+      result.set(
+        row.id,
+        new Float32Array(
+          row.embedding.buffer,
+          row.embedding.byteOffset,
+          row.embedding.byteLength / 4,
+        ),
+      );
+    }
+    return result;
+  });
+};
+
+interface GetObservationsWithoutEmbeddingsInput {
+  readonly limit: number;
+}
+
+/**
+ * Returns observations lacking embeddings, for backfill processing.
+ */
+export const getObservationsWithoutEmbeddings = (
+  db: Database,
+  input: GetObservationsWithoutEmbeddingsInput,
+): Result<
+  readonly {
+    readonly id: number;
+    readonly title: string;
+    readonly narrative: string;
+  }[]
+> => {
+  return fromTry(() => {
+    const rows = db
+      .query<
+        { id: number; title: string | null; narrative: string | null },
+        [number]
+      >(
+        `SELECT id, title, narrative FROM observations WHERE embedding IS NULL ORDER BY id LIMIT ?`,
+      )
+      .all(input.limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title ?? "",
+      narrative: row.narrative ?? "",
+    }));
+  });
+};
+
+/**
+ * Stores a pre-computed embedding BLOB for an observation.
+ */
+export const updateObservationEmbedding = (
+  db: Database,
+  id: number,
+  embedding: Float32Array,
+): Result<void> => {
+  return fromTry(() => {
+    db.run("UPDATE observations SET embedding = ? WHERE id = ?", [
+      Buffer.from(embedding.buffer),
+      id,
+    ]);
+  });
+};
+
+// ============================================================================
 // Deduplication
 // ============================================================================
 

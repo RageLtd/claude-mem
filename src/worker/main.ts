@@ -55,6 +55,7 @@ const start = async (): Promise<void> => {
       const httpRouter = createWorkerRouter({
         db,
         router: messageRouter,
+        modelManager,
         startedAt,
         version: VERSION,
       });

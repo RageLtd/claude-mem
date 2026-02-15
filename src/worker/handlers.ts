@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 import {
   createSession,
   getCandidateObservations,
+  getEmbeddingsByIds,
   getObservationById,
   getRecentObservations,
   getRecentSummaries,
@@ -16,12 +17,14 @@ import {
   searchObservations,
   searchSummaries,
 } from "../db/index";
+import type { ModelManager } from "../models/manager";
 import {
   formatContextFull,
   formatContextIndex,
   formatObservationFull,
 } from "../utils/context-formatter";
 import {
+  cosineSimilarity,
   DEFAULT_SCORING_CONFIG,
   type ScoringContext,
   scoreObservation,
@@ -31,12 +34,46 @@ import { escapeFts5Query, projectFromCwd } from "../utils/validation";
 import type { MessageRouter } from "./message-router";
 
 // ============================================================================
+// Internal helpers
+// ============================================================================
+
+/**
+ * Enqueues embed messages for observations that lack embeddings.
+ * Used by both handleGetContext and handleSearch to backfill lazily.
+ */
+const enqueueMissingEmbeddings = (
+  router: MessageRouter,
+  observations: readonly {
+    readonly id: number;
+    readonly sdkSessionId: string;
+    readonly title: string | null;
+    readonly narrative: string | null;
+  }[],
+  existingIds: Set<number>,
+): void => {
+  for (const obs of observations) {
+    if (!existingIds.has(obs.id) && obs.title) {
+      router.enqueue({
+        type: "embed",
+        claudeSessionId: obs.sdkSessionId,
+        data: {
+          observationId: obs.id,
+          title: obs.title ?? "",
+          narrative: obs.narrative ?? "",
+        },
+      });
+    }
+  }
+};
+
+// ============================================================================
 // Types
 // ============================================================================
 
 export interface WorkerDeps {
   readonly db: Database;
   readonly router?: MessageRouter;
+  readonly modelManager?: ModelManager;
   readonly startedAt?: number;
   readonly version?: string;
 }
@@ -425,13 +462,13 @@ export const handleGetContext = async (
 
   // Build scoring context
   const ftsRanks = new Map<number, number>();
-  const embeddingFlags = new Map<number, boolean>();
+  const embeddingScores = new Map<number, number>();
   for (const c of candidates) {
     if (c.ftsRank !== 0) {
       ftsRanks.set(c.id, Math.abs(c.ftsRank));
     }
     if (c.hasEmbedding) {
-      embeddingFlags.set(c.id, true);
+      embeddingScores.set(c.id, 1.0);
     }
   }
 
@@ -445,7 +482,7 @@ export const handleGetContext = async (
     currentProject: project,
     cwdFiles: [],
     ftsRanks,
-    embeddingFlags,
+    embeddingScores,
     config: {
       ...DEFAULT_SCORING_CONFIG,
       recencyHalfLifeDays: Number.isNaN(halfLifeDays) ? 2 : halfLifeDays,
@@ -463,6 +500,12 @@ export const handleGetContext = async (
     .slice(0, limit);
 
   const observations = scored.map((s) => s.observation);
+
+  // Enqueue embed messages for returned observations that lack embeddings
+  if (deps.router) {
+    const embeddedIds = new Set(embeddingScores.keys());
+    enqueueMissingEmbeddings(deps.router, observations, embeddedIds);
+  }
 
   // Compute type counts from scored/filtered observations
   const typeCounts: Record<string, number> = {};
@@ -588,11 +631,13 @@ export const handleSearch = async (
   const escapedQuery = escapeFts5Query(query);
 
   if (type === "observations") {
+    // Fetch extra results for re-ranking headroom
+    const fetchLimit = deps.modelManager ? limit * 2 : limit;
     const result = searchObservations(deps.db, {
       query: escapedQuery,
       concept,
       project,
-      limit,
+      limit: fetchLimit,
     });
     if (!result.ok) {
       return {
@@ -601,11 +646,52 @@ export const handleSearch = async (
       };
     }
 
+    let observations = result.value;
+
+    // Re-rank with embedding similarity when ModelManager is available
+    if (deps.modelManager && observations.length > 0) {
+      const queryEmbedding = await deps.modelManager.computeEmbedding(query);
+      const ids = observations.map((o) => o.id);
+      const embeddingsResult = getEmbeddingsByIds(deps.db, { ids });
+
+      if (embeddingsResult.ok) {
+        const embeddings = embeddingsResult.value;
+
+        // Score each observation: 60% FTS position + 40% cosine similarity
+        const scored = observations.map((obs, index) => {
+          const ftsScore = 1 - index / observations.length;
+          const stored = embeddings.get(obs.id);
+          const embScore = stored
+            ? cosineSimilarity(queryEmbedding, stored)
+            : 0;
+          return {
+            observation: obs,
+            combined: 0.6 * ftsScore + 0.4 * embScore,
+          };
+        });
+
+        scored.sort((a, b) => b.combined - a.combined);
+        observations = scored.slice(0, limit).map((s) => s.observation);
+
+        // Enqueue embed messages for results without embeddings
+        if (deps.router) {
+          enqueueMissingEmbeddings(
+            deps.router,
+            result.value,
+            new Set(embeddings.keys()),
+          );
+        }
+      }
+    }
+
+    // Always enforce limit (covers fallback paths)
+    observations = observations.slice(0, limit);
+
     return {
       status: 200,
       body: {
-        results: result.value,
-        count: result.value.length,
+        results: observations,
+        count: observations.length,
       },
     };
   }
