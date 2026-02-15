@@ -551,17 +551,17 @@ export const getCandidateObservations = (
   return fromTry(() => {
     if (ftsQuery) {
       const sql = `
-				SELECT o.id, o.sdk_session_id, o.project, o.type, o.title, o.subtitle,
-				       o.narrative, o.facts, o.concepts, o.files_read, o.files_modified,
-				       o.prompt_number, o.discovery_tokens, o.created_at, o.created_at_epoch,
-				       (o.embedding IS NOT NULL) AS has_embedding,
-				       fts.rank as fts_rank
-				FROM observations o
-				JOIN observations_fts fts ON o.id = fts.rowid
-				WHERE observations_fts MATCH ?
-				ORDER BY fts.rank
-				LIMIT ?
-			`;
+        SELECT o.id, o.sdk_session_id, o.project, o.type, o.title, o.subtitle,
+               o.narrative, o.facts, o.concepts, o.files_read, o.files_modified,
+               o.prompt_number, o.discovery_tokens, o.created_at, o.created_at_epoch,
+               (o.embedding IS NOT NULL) AS has_embedding,
+               fts.rank as fts_rank
+        FROM observations o
+        JOIN observations_fts fts ON o.id = fts.rowid
+        WHERE observations_fts MATCH ?
+        ORDER BY fts.rank
+        LIMIT ?
+      `;
       const rows = db
         .query<
           Omit<ObservationRow, "embedding"> & {
@@ -581,15 +581,15 @@ export const getCandidateObservations = (
 
     // No FTS query — return recent from all projects
     const sql = `
-			SELECT id, sdk_session_id, project, type, title, subtitle,
-			       narrative, facts, concepts, files_read, files_modified,
-			       prompt_number, discovery_tokens, created_at, created_at_epoch,
-			       (embedding IS NOT NULL) AS has_embedding,
-			       0 as fts_rank
-			FROM observations
-			ORDER BY created_at_epoch DESC
-			LIMIT ?
-		`;
+      SELECT id, sdk_session_id, project, type, title, subtitle,
+             narrative, facts, concepts, files_read, files_modified,
+             prompt_number, discovery_tokens, created_at, created_at_epoch,
+             (embedding IS NOT NULL) AS has_embedding,
+             0 as fts_rank
+      FROM observations
+      ORDER BY created_at_epoch DESC
+      LIMIT ?
+    `;
     const rows = db
       .query<
         Omit<ObservationRow, "embedding"> & {
@@ -650,9 +650,9 @@ export const findSimilarObservation = (
     const rows = db
       .query<ObservationRow, [string, number]>(
         `SELECT * FROM observations
-				 WHERE project = ? AND created_at_epoch > ?
-				 ORDER BY created_at_epoch DESC
-				 LIMIT 20`,
+         WHERE project = ? AND created_at_epoch > ?
+         ORDER BY created_at_epoch DESC
+         LIMIT 20`,
       )
       .all(project, cutoff);
 
