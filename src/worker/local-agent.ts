@@ -22,8 +22,12 @@ import {
   parseSummaryToolCall,
   parseToolCall,
 } from "../models/tool-call-parser";
-import type { ParsedObservation, ParsedSummary } from "../types/domain";
-import { fromTry } from "../types/result";
+import type {
+  ParsedObservation,
+  ParsedSummary,
+  ToolObservation,
+} from "../types/domain";
+import { err, fromTry, ok, type Result } from "../types/result";
 import type {
   PendingInputMessage,
   SDKAgent,
@@ -38,6 +42,12 @@ import type { ActiveSession } from "./session-manager";
 export interface LocalAgentDeps {
   readonly db: Database;
   readonly modelManager: ModelManager;
+}
+
+export interface SessionContext {
+  readonly claudeSessionId: string;
+  readonly project: string;
+  readonly promptNumber: number;
 }
 
 // ============================================================================
@@ -330,4 +340,140 @@ export const createLocalAgent = (deps: LocalAgentDeps): SDKAgent => {
   };
 
   return { processMessages };
+};
+
+// ============================================================================
+// Standalone functions (used by message-router)
+// ============================================================================
+
+export const processObservation = async (
+  deps: LocalAgentDeps,
+  context: SessionContext,
+  observation: ToolObservation,
+): Promise<Result<number | null, Error>> => {
+  const { db, modelManager } = deps;
+  const systemPrompt = buildLocalSystemPrompt();
+  const userPrompt = buildLocalObservationPrompt(observation);
+
+  log(`Processing observation for tool=${observation.toolName}`);
+
+  const response = await modelManager.generateText(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    [OBSERVATION_TOOL],
+  );
+
+  const toolCall = parseToolCall(response);
+  if (!toolCall) {
+    log("Model skipped observation (no tool call)");
+    return ok(null);
+  }
+
+  const args = toolCall.arguments;
+  const { filesRead, filesModified } = extractFilePaths(
+    observation.toolName,
+    observation.toolInput,
+  );
+
+  const parsed: ParsedObservation = {
+    type: args.type,
+    title: args.title,
+    subtitle: args.subtitle ?? null,
+    narrative: args.narrative,
+    facts: args.facts ?? [],
+    concepts: args.concepts ?? [],
+    filesRead,
+    filesModified,
+  };
+
+  const dupCheck = findSimilarObservation(db, {
+    project: context.project,
+    title: parsed.title || "",
+    withinMs: 3600000,
+  });
+
+  if (dupCheck.ok && dupCheck.value) {
+    log(
+      `Skipping duplicate: "${parsed.title}" (similar to #${dupCheck.value.id})`,
+    );
+    return ok(null);
+  }
+
+  const result = storeObservation(db, {
+    claudeSessionId: context.claudeSessionId,
+    project: context.project,
+    observation: parsed,
+    promptNumber: context.promptNumber,
+    discoveryTokens: 0,
+  });
+
+  if (!result.ok) {
+    return err(new Error(result.error.message));
+  }
+
+  log(`Observation stored with id=${result.value}`);
+  storeEmbedding(
+    db,
+    modelManager,
+    result.value,
+    parsed.title || "",
+    parsed.narrative || "",
+  );
+
+  return ok(result.value);
+};
+
+export const processSummary = async (
+  deps: LocalAgentDeps,
+  context: SessionContext,
+  input: {
+    readonly lastUserMessage: string;
+    readonly lastAssistantMessage?: string;
+  },
+): Promise<Result<number, Error>> => {
+  const { db, modelManager } = deps;
+  const systemPrompt = buildLocalSystemPrompt();
+  const userPrompt = buildLocalSummaryPrompt({
+    lastUserMessage: input.lastUserMessage,
+    lastAssistantMessage: input.lastAssistantMessage,
+  });
+
+  log("Processing summarize request");
+
+  const response = await modelManager.generateText(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    [SUMMARY_TOOL],
+  );
+
+  const toolCall = parseSummaryToolCall(response);
+  const summary: ParsedSummary = toolCall
+    ? {
+        request: toolCall.arguments.request ?? null,
+        investigated: toolCall.arguments.investigated ?? null,
+        learned: toolCall.arguments.learned ?? null,
+        completed: toolCall.arguments.completed ?? null,
+        nextSteps: toolCall.arguments.nextSteps ?? null,
+        notes: toolCall.arguments.notes ?? null,
+      }
+    : buildSummaryFromResponse(input.lastUserMessage || null, response);
+
+  const result = storeSummary(db, {
+    claudeSessionId: context.claudeSessionId,
+    project: context.project,
+    summary,
+    promptNumber: context.promptNumber,
+    discoveryTokens: 0,
+  });
+
+  if (!result.ok) {
+    return err(new Error(result.error.message));
+  }
+
+  log(`Summary stored with id=${result.value}`);
+  return ok(result.value);
 };
