@@ -19,10 +19,6 @@ import {
   handleSearch,
   type WorkerDeps,
 } from "../../src/worker/handlers";
-import {
-  createSessionManager,
-  type SessionManager,
-} from "../../src/worker/session-manager";
 
 describe("worker handlers", () => {
   let db: Database;
@@ -51,7 +47,7 @@ describe("worker handlers", () => {
       expect(result.body.status).toBe("ok");
       expect(result.body.version).toBe("1.0.0");
       expect(result.body.uptimeSeconds).toBeGreaterThanOrEqual(5);
-      expect(result.body.activeSessions).toBe(0);
+      expect(result.body.pendingMessages).toBe(0);
     });
 
     it("handles missing optional deps gracefully", async () => {
@@ -61,7 +57,7 @@ describe("worker handlers", () => {
       expect(result.body.status).toBe("ok");
       expect(result.body.version).toBe("unknown");
       expect(result.body.uptimeSeconds).toBe(0);
-      expect(result.body.activeSessions).toBe(0);
+      expect(result.body.pendingMessages).toBe(0);
     });
   });
 
@@ -643,149 +639,5 @@ describe("handleGetContext — relevance scoring", () => {
     if (body.context.includes("Same bug fix")) {
       expect(body.context).toContain("[from: other-project]");
     }
-  });
-});
-
-describe("worker handlers with SessionManager integration", () => {
-  let db: Database;
-  let sessionManager: SessionManager;
-  let deps: WorkerDeps;
-
-  beforeEach(() => {
-    db = createDatabase(":memory:");
-    runMigrations(db);
-    sessionManager = createSessionManager();
-    deps = { db, sessionManager };
-  });
-
-  afterEach(() => {
-    db.close();
-  });
-
-  describe("handleQueuePrompt with SessionManager", () => {
-    it("initializes session in SessionManager for new session", async () => {
-      const result = await handleQueuePrompt(deps, {
-        claudeSessionId: "claude-new",
-        prompt: "Help me fix a bug",
-        cwd: "/projects/my-app",
-      });
-
-      expect(result.status).toBe(200);
-      // SessionManager should have initialized the session
-      const activeSessions = sessionManager.getActiveSessions();
-      expect(activeSessions.length).toBe(1);
-      expect(activeSessions[0].claudeSessionId).toBe("claude-new");
-      expect(activeSessions[0].userPrompt).toBe("Help me fix a bug");
-    });
-
-    it("queues continuation in SessionManager for existing session", async () => {
-      // First create session
-      createSession(db, {
-        claudeSessionId: "claude-123",
-        project: "test-project",
-        userPrompt: "Initial prompt",
-      });
-
-      // Initialize in SessionManager manually (simulating prior prompt)
-      sessionManager.initializeSession(
-        1,
-        "claude-123",
-        "test-project",
-        "Initial prompt",
-      );
-
-      const result = await handleQueuePrompt(deps, {
-        claudeSessionId: "claude-123",
-        prompt: "Follow up prompt",
-        cwd: "/projects/test-project",
-      });
-
-      expect(result.status).toBe(200);
-      expect(result.body.promptNumber).toBeGreaterThan(1);
-
-      // Should have queued a continuation message
-      const iterator = sessionManager.getMessageIterator(1);
-      expect(iterator).not.toBeNull();
-      const msg = await iterator?.next();
-      expect(msg?.value?.type).toBe("continuation");
-    });
-  });
-
-  describe("handleQueueObservation with SessionManager", () => {
-    it("queues observation in SessionManager for active session", async () => {
-      // Create session in DB
-      createSession(db, {
-        claudeSessionId: "claude-123",
-        project: "test-project",
-        userPrompt: "Test",
-      });
-
-      // Initialize in SessionManager
-      sessionManager.initializeSession(1, "claude-123", "test-project", "Test");
-
-      const result = await handleQueueObservation(deps, {
-        claudeSessionId: "claude-123",
-        toolName: "Bash",
-        toolInput: { command: "git status" },
-        toolResponse: { stdout: "On branch main" },
-        cwd: "/project",
-      });
-
-      expect(result.status).toBe(200);
-
-      // Should have queued an observation message
-      const iterator = sessionManager.getMessageIterator(1);
-      expect(iterator).not.toBeNull();
-      const msg = await iterator?.next();
-      expect(msg?.value?.type).toBe("observation");
-    });
-  });
-
-  describe("handleQueueSummary with SessionManager", () => {
-    it("queues summarize in SessionManager for active session", async () => {
-      createSession(db, {
-        claudeSessionId: "claude-123",
-        project: "test-project",
-        userPrompt: "Test",
-      });
-
-      sessionManager.initializeSession(1, "claude-123", "test-project", "Test");
-
-      const result = await handleQueueSummary(deps, {
-        claudeSessionId: "claude-123",
-        lastUserMessage: "Fix the bug",
-        lastAssistantMessage: "I fixed it",
-      });
-
-      expect(result.status).toBe(200);
-
-      // Should have queued a summarize message
-      const iterator = sessionManager.getMessageIterator(1);
-      expect(iterator).not.toBeNull();
-      const msg = await iterator?.next();
-      expect(msg?.value?.type).toBe("summarize");
-    });
-  });
-
-  describe("handleCompleteSession with SessionManager", () => {
-    it("closes session in SessionManager", async () => {
-      createSession(db, {
-        claudeSessionId: "claude-123",
-        project: "test-project",
-        userPrompt: "Test",
-      });
-
-      sessionManager.initializeSession(1, "claude-123", "test-project", "Test");
-
-      expect(sessionManager.getActiveSessions().length).toBe(1);
-
-      const result = await handleCompleteSession(deps, {
-        claudeSessionId: "claude-123",
-        reason: "exit",
-      });
-
-      expect(result.status).toBe(200);
-      expect(sessionManager.getActiveSessions().length).toBe(0);
-    });
   });
 });

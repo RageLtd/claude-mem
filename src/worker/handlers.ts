@@ -15,7 +15,6 @@ import {
   saveUserPrompt,
   searchObservations,
   searchSummaries,
-  updateSessionStatus,
 } from "../db/index";
 import {
   formatContextFull,
@@ -29,7 +28,7 @@ import {
 } from "../utils/relevance";
 import { parseSince } from "../utils/temporal";
 import { escapeFts5Query, projectFromCwd } from "../utils/validation";
-import type { SessionManager } from "./session-manager";
+import type { MessageRouter } from "./message-router";
 
 // ============================================================================
 // Types
@@ -37,7 +36,7 @@ import type { SessionManager } from "./session-manager";
 
 export interface WorkerDeps {
   readonly db: Database;
-  readonly sessionManager?: SessionManager;
+  readonly router?: MessageRouter;
   readonly startedAt?: number;
   readonly version?: string;
 }
@@ -121,7 +120,7 @@ export interface HealthCheckResponse {
   readonly status: string;
   readonly version: string;
   readonly uptimeSeconds: number;
-  readonly activeSessions: number;
+  readonly pendingMessages: number;
 }
 
 /**
@@ -134,7 +133,7 @@ export const handleHealth = async (
   const uptimeSeconds = deps.startedAt
     ? Math.floor((now - deps.startedAt) / 1000)
     : 0;
-  const activeSessions = deps.sessionManager?.getActiveSessions().length ?? 0;
+  const pendingMessages = deps.router?.pending() ?? 0;
 
   return {
     status: 200,
@@ -142,7 +141,7 @@ export const handleHealth = async (
       status: "ok",
       version: deps.version || "unknown",
       uptimeSeconds,
-      activeSessions,
+      pendingMessages,
     },
   };
 };
@@ -173,11 +172,9 @@ export const handleQueueObservation = async (
     };
   }
 
-  let sessionId: number;
   const project = projectFromCwd(cwd);
 
   if (!sessionResult.value) {
-    // Create session with minimal info
     const createResult = createSession(deps.db, {
       claudeSessionId,
       project,
@@ -190,39 +187,14 @@ export const handleQueueObservation = async (
         body: { error: createResult.error.message },
       };
     }
-    sessionId = createResult.value.id;
-
-    // Initialize in SessionManager if this is a new session
-    if (createResult.value.isNew && deps.sessionManager) {
-      deps.sessionManager.initializeSession(
-        sessionId,
-        claudeSessionId,
-        project,
-        "",
-      );
-    }
-  } else {
-    sessionId = sessionResult.value.id;
-
-    // Ensure session is initialized in SessionManager (may have been created by another request)
-    if (deps.sessionManager && !deps.sessionManager.getSession(sessionId)) {
-      deps.sessionManager.initializeSession(
-        sessionId,
-        claudeSessionId,
-        project,
-        "",
-      );
-    }
   }
 
-  // Queue observation in SessionManager if available
-  if (deps.sessionManager) {
-    deps.sessionManager.queueObservation(sessionId, {
-      toolName,
-      toolInput,
-      toolResponse,
-      cwd,
-      occurredAt: new Date().toISOString(),
+  // Enqueue for background processing
+  if (deps.router) {
+    deps.router.enqueue({
+      type: "observation",
+      claudeSessionId,
+      data: { toolName, toolInput, toolResponse, cwd },
     });
   }
 
@@ -267,7 +239,6 @@ export const handleQueuePrompt = async (
   const project = projectFromCwd(cwd);
 
   if (!sessionResult.value) {
-    // Try to create new session (handles race condition via INSERT OR IGNORE)
     const createResult = createSession(deps.db, {
       claudeSessionId,
       project,
@@ -283,22 +254,9 @@ export const handleQueuePrompt = async (
 
     sessionId = createResult.value.id;
 
-    // Use isNew to determine if this is truly a new session or we lost a race
     if (createResult.value.isNew) {
       promptNumber = 1;
-
-      // Initialize in SessionManager if available
-      if (deps.sessionManager) {
-        deps.sessionManager.initializeSession(
-          sessionId,
-          claudeSessionId,
-          project,
-          prompt,
-        );
-      }
     } else {
-      // Lost the race - session was created by another request
-      // Treat as continuation
       const counterResult = incrementPromptCounter(deps.db, sessionId);
       if (!counterResult.ok) {
         return {
@@ -307,16 +265,10 @@ export const handleQueuePrompt = async (
         };
       }
       promptNumber = counterResult.value;
-
-      // Queue continuation in SessionManager if available
-      if (deps.sessionManager) {
-        deps.sessionManager.queueContinuation(sessionId, prompt, promptNumber);
-      }
     }
   } else {
     sessionId = sessionResult.value.id;
 
-    // Increment counter for continuation prompt
     const counterResult = incrementPromptCounter(deps.db, sessionId);
     if (!counterResult.ok) {
       return {
@@ -325,11 +277,6 @@ export const handleQueuePrompt = async (
       };
     }
     promptNumber = counterResult.value;
-
-    // Queue continuation in SessionManager if available
-    if (deps.sessionManager) {
-      deps.sessionManager.queueContinuation(sessionId, prompt, promptNumber);
-    }
   }
 
   // Store the prompt
@@ -364,8 +311,6 @@ export const handleQueueSummary = async (
   input: QueueSummaryInput,
 ): Promise<HandlerResponse> => {
   const { claudeSessionId, lastUserMessage, lastAssistantMessage } = input;
-  // transcriptPath is forwarded from the hook but not yet wired to the SDK agent.
-  // Future: parse transcript to extract actual user/assistant messages.
 
   // Validate session exists
   const sessionResult = getSessionByClaudeId(deps.db, claudeSessionId);
@@ -383,16 +328,15 @@ export const handleQueueSummary = async (
     };
   }
 
-  // Queue summarize in SessionManager if available
-  if (deps.sessionManager) {
-    deps.sessionManager.queueSummarize(
-      sessionResult.value.id,
-      lastUserMessage,
-      lastAssistantMessage,
-    );
+  // Enqueue for background processing
+  if (deps.router) {
+    deps.router.enqueue({
+      type: "summarize",
+      claudeSessionId,
+      data: { lastUserMessage, lastAssistantMessage },
+    });
   }
 
-  // Queue summary request
   return {
     status: 200,
     body: {
@@ -427,23 +371,13 @@ export const handleCompleteSession = async (
     };
   }
 
-  // Close session in SessionManager if available
-  if (deps.sessionManager) {
-    deps.sessionManager.closeSession(sessionResult.value.id);
-  }
-
-  // Update status
-  const updateResult = updateSessionStatus(
-    deps.db,
-    sessionResult.value.id,
-    "completed",
-  );
-
-  if (!updateResult.ok) {
-    return {
-      status: 500,
-      body: { error: updateResult.error.message },
-    };
+  // Enqueue completion for background processing
+  if (deps.router) {
+    deps.router.enqueue({
+      type: "complete",
+      claudeSessionId,
+      data: { reason },
+    });
   }
 
   return {
