@@ -161,7 +161,7 @@ const createMockModelManager = (
     (): ModelManagerConfig => ({
       generativeModelId: "test-model",
       embeddingModelId: "test-embed-model",
-      dtype: "q4",
+      cliPath: "",
       cacheDir: "/tmp/test-models",
     }),
   ),

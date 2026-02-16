@@ -661,7 +661,7 @@ describe("handleSearch — embedding re-ranking", () => {
       (): ModelManagerConfig => ({
         generativeModelId: "test",
         embeddingModelId: "test-embed",
-        dtype: "q4",
+        cliPath: "",
         cacheDir: "/tmp",
       }),
     ),

@@ -1,6 +1,6 @@
 /**
- * Tests for the local agent that uses Transformers.js for observation extraction.
- * Mocks ModelManager to avoid downloading actual models.
+ * Tests for the local agent that uses llama.cpp CLI for observation extraction.
+ * Mocks ModelManager to avoid invoking actual llama.cpp binaries.
  */
 
 import type { Database } from "bun:sqlite";
@@ -41,7 +41,7 @@ const createMockModelManager = (
     (): ModelManagerConfig => ({
       generativeModelId: "test-model",
       embeddingModelId: "test-embed-model",
-      dtype: "q4",
+      cliPath: "",
       cacheDir: "/tmp/test-models",
     }),
   );

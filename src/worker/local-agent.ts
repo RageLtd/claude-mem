@@ -1,7 +1,7 @@
 /**
- * Local agent for observation extraction using Transformers.js.
+ * Local agent for observation extraction using llama.cpp CLI.
  * Standalone functions for processing observations and summaries
- * through the local ONNX model, called by message-router.
+ * through the local llama.cpp model, called by message-router.
  */
 
 import type { Database } from "bun:sqlite";

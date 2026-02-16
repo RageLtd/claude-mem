@@ -2,7 +2,7 @@
  * Message router — sequential FIFO queue for processing hook messages.
  * Replaces SessionManager + BackgroundProcessor with ~80 lines.
  *
- * Messages are processed one at a time through the local ONNX model.
+ * Messages are processed one at a time through the local llama.cpp model.
  * No timers, no polling, no per-session state. Drain triggered at enqueue time.
  */
 
